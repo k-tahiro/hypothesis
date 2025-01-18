@@ -21,9 +21,13 @@ See https://github.com/HypothesisWorks/hypothesis/issues/3140 for details.
 
 import base64
 import json
+import os
 import sys
+import warnings
+from fnmatch import fnmatch
 from inspect import signature
 
+import _hypothesis_globals
 import pytest
 
 try:
@@ -94,6 +98,18 @@ if tuple(map(int, pytest.__version__.split(".")[:2])) < (4, 6):  # pragma: no co
     warnings.warn(PYTEST_TOO_OLD_MESSAGE % (pytest.__version__,), stacklevel=1)
 
 else:
+    # Restart side-effect detection as early as possible, to maximize coverage. We
+    # need balanced increment/decrement in configure/sessionstart to support nested
+    # pytest (e.g. runpytest_inprocess), so this early increment in effect replaces
+    # the first one in pytest_configure.
+    if not os.environ.get("HYPOTHESIS_EXTEND_INITIALIZATION"):
+        _hypothesis_globals.in_initialization += 1
+        if "hypothesis" in sys.modules:
+            # Some other plugin has imported hypothesis, so we'll check if there
+            # have been undetected side-effects and warn if so.
+            from hypothesis.configuration import notice_initialization_restarted
+
+            notice_initialization_restarted()
 
     def pytest_addoption(parser):
         group = parser.getgroup("hypothesis", "Hypothesis")
@@ -168,7 +184,7 @@ else:
             and Phase.explain not in settings.default.phases
         ):
             name = f"{settings._current_profile}-with-explain-phase"
-            phases = settings.default.phases + (Phase.explain,)
+            phases = (*settings.default.phases, Phase.explain)
             settings.register_profile(name, phases=phases)
             settings.load_profile(name)
 
@@ -191,9 +207,9 @@ else:
         from hypothesis.internal.detection import is_hypothesis_test
 
         # See https://github.com/pytest-dev/pytest/issues/9159
-        # TODO: add `pytest_version >= (7, 2) or` once the issue above is fixed.
         core.pytest_shows_exceptiongroups = (
-            item.config.getoption("tbstyle", "auto") == "native"
+            getattr(pytest, "version_tuple", ())[:2] >= (7, 2)
+            or item.config.getoption("tbstyle", "auto") == "native"
         )
         core.running_under_pytest = True
 
@@ -221,12 +237,12 @@ else:
                 ("reproduce_example", "_hypothesis_internal_use_reproduce_failure"),
             ]:
                 if hasattr(item.obj, attribute):
-                    from hypothesis.errors import InvalidArgument  # noqa: F811
+                    from hypothesis.errors import InvalidArgument
 
                     raise_hypothesis_usage_error(message % (name,))
             yield
         else:
-            from hypothesis import HealthCheck, settings
+            from hypothesis import HealthCheck, settings as Settings
             from hypothesis.internal.escalation import current_pytest_item
             from hypothesis.internal.healthcheck import fail_health_check
             from hypothesis.reporting import with_reporter
@@ -237,16 +253,15 @@ else:
             # work, the test object is probably something weird
             # (e.g a stateful test wrapper), so we skip the function-scoped
             # fixture check.
-            settings = getattr(  # noqa: F811
-                item.obj, "_hypothesis_internal_use_settings", None
+            settings = getattr(
+                item.obj, "_hypothesis_internal_use_settings", Settings.default
             )
 
             # Check for suspicious use of function-scoped fixtures, but only
             # if the corresponding health check is not suppressed.
-            if (
-                settings is not None
-                and HealthCheck.function_scoped_fixture
-                not in settings.suppress_health_check
+            fixture_params = False
+            if not set(settings.suppress_health_check).issuperset(
+                {HealthCheck.function_scoped_fixture, HealthCheck.differing_executors}
             ):
                 # Warn about function-scoped fixtures, excluding autouse fixtures because
                 # the advice is probably not actionable and the status quo seems OK...
@@ -258,6 +273,7 @@ else:
                     if argnames is None:
                         argnames = frozenset(signature(item.function).parameters)
                     for fx in fx_defs:
+                        fixture_params |= bool(fx.params)
                         if fx.argname in argnames:
                             active_fx = item._request._get_active_fixturedef(fx.argname)
                             if active_fx.scope == "function":
@@ -267,7 +283,18 @@ else:
                                     HealthCheck.function_scoped_fixture,
                                 )
 
-            if item.get_closest_marker("parametrize") is not None:
+            if fixture_params or (item.get_closest_marker("parametrize") is not None):
+                # Disable the differing_executors health check due to false alarms:
+                # see https://github.com/HypothesisWorks/hypothesis/issues/3733
+                from hypothesis import settings as Settings
+
+                fn = getattr(item.obj, "__func__", item.obj)
+                fn._hypothesis_internal_use_settings = Settings(
+                    parent=settings,
+                    suppress_health_check={HealthCheck.differing_executors}
+                    | set(settings.suppress_health_check),
+                )
+
                 # Give every parametrized test invocation a unique database key
                 key = item.nodeid.encode()
                 item.obj.hypothesis.inner_test._hypothesis_internal_add_digest = key
@@ -283,7 +310,7 @@ else:
                     with current_pytest_item.with_value(item):
                         yield
             if store.results:
-                item.hypothesis_report_information = list(store.results)
+                item.hypothesis_report_information = "\n".join(store.results)
 
     def _stash_get(config, key, default):
         if hasattr(config, "stash"):
@@ -299,9 +326,7 @@ else:
     def pytest_runtest_makereport(item, call):
         report = (yield).get_result()
         if hasattr(item, "hypothesis_report_information"):
-            report.sections.append(
-                ("Hypothesis", "\n".join(item.hypothesis_report_information))
-            )
+            report.sections.append(("Hypothesis", item.hypothesis_report_information))
         if report.when != "teardown":
             return
 
@@ -329,8 +354,9 @@ else:
             # If there's an HTML report, include our summary stats for each test
             pytest_html = item.config.pluginmanager.getplugin("html")
             if pytest_html is not None:  # pragma: no cover
-                report.extra = getattr(report, "extra", []) + [
-                    pytest_html.extras.text(stats, name="Hypothesis stats")
+                report.extra = [
+                    *getattr(report, "extra", []),
+                    pytest_html.extras.text(stats, name="Hypothesis stats"),
                 ]
 
         # This doesn't intrinsically have anything to do with the terminalreporter;
@@ -361,6 +387,13 @@ else:
                 if fex:
                     failing_examples.append(json.loads(fex))
 
+        from hypothesis.internal.observability import _WROTE_TO
+
+        if _WROTE_TO:
+            terminalreporter.section("Hypothesis")
+            for fname in sorted(_WROTE_TO):
+                terminalreporter.write_line(f"observations written to {fname}")
+
         if failing_examples:
             # This must have been imported already to write the failing examples
             from hypothesis.extra._patching import gc_patches, make_patch, save_patch
@@ -372,7 +405,8 @@ else:
             except Exception:
                 # fail gracefully if we hit any filesystem or permissions problems
                 return
-            terminalreporter.section("Hypothesis")
+            if not _WROTE_TO:
+                terminalreporter.section("Hypothesis")
             terminalreporter.write_line(
                 f"`git apply {fname}` to add failing examples to your code."
             )
@@ -386,6 +420,10 @@ else:
         for item in items:
             if isinstance(item, pytest.Function) and is_hypothesis_test(item.obj):
                 item.add_marker("hypothesis")
+
+    def pytest_sessionstart(session):
+        # Note: may be called multiple times, so we can go negative
+        _hypothesis_globals.in_initialization -= 1
 
     # Monkeypatch some internals to prevent applying @pytest.fixture() to a
     # function which has already been decorated with @hypothesis.given().
@@ -406,6 +444,26 @@ else:
 
     _orig_call = fixtures.FixtureFunctionMarker.__call__
     fixtures.FixtureFunctionMarker.__call__ = _ban_given_call  # type: ignore
+
+    if int(pytest.__version__.split(".")[0]) >= 7:  # pragma: no branch
+        # Hook has had this signature since Pytest 7.0, so skip on older versions
+
+        def pytest_ignore_collect(collection_path, config):
+            # Detect, warn about, and mititgate certain misconfigurations;
+            # this is mostly educational but can also speed up collection.
+            if (
+                (name := collection_path.name) == ".hypothesis"
+                and collection_path.is_dir()
+                and not any(fnmatch(name, p) for p in config.getini("norecursedirs"))
+            ):
+                warnings.warn(
+                    "Skipping collection of '.hypothesis' directory - this usually "
+                    "means you've explicitly set the `norecursedirs` pytest config "
+                    "option, replacing rather than extending the default ignores.",
+                    stacklevel=1,
+                )
+                return True
+            return None  # let other hooks decide
 
 
 def load():

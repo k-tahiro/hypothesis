@@ -15,7 +15,6 @@ import unicodedata
 import pytest
 
 from hypothesis import HealthCheck, assume, given, settings, strategies as st
-from hypothesis._settings import local_settings
 from hypothesis.errors import InvalidArgument
 from hypothesis.internal.compat import PYPY
 from hypothesis.strategies._internal.regex import (
@@ -28,7 +27,12 @@ from hypothesis.strategies._internal.regex import (
     regex_strategy,
 )
 
-from tests.common.debug import assert_all_examples, assert_no_examples, find_any
+from tests.common.debug import (
+    assert_all_examples,
+    assert_no_examples,
+    check_can_generate_examples,
+    find_any,
+)
 
 
 def is_ascii(s):
@@ -134,12 +138,16 @@ def test_matching(category, predicate, invert, is_unicode):
         "[^\\S]",  # categories
     ],
 )
-@pytest.mark.parametrize("encode", [False, True])
+@pytest.mark.parametrize("encode", [None, False, True])
 def test_can_generate(pattern, encode):
+    alphabet = st.characters(max_codepoint=1000) if encode is None else None
     if encode:
         pattern = pattern.encode("ascii")
-    with local_settings(settings(suppress_health_check=[HealthCheck.data_too_large])):
-        assert_all_examples(st.from_regex(pattern), re.compile(pattern).search)
+    assert_all_examples(
+        st.from_regex(pattern, alphabet=alphabet),
+        re.compile(pattern).search,
+        settings=settings(suppress_health_check=[HealthCheck.data_too_large]),
+    )
 
 
 @pytest.mark.parametrize(
@@ -174,16 +182,12 @@ def test_any_doesnt_generate_newline():
 
 @pytest.mark.parametrize("pattern", [re.compile("\\A.\\Z", re.DOTALL), "(?s)\\A.\\Z"])
 def test_any_with_dotall_generate_newline(pattern):
-    find_any(
-        st.from_regex(pattern), lambda s: s == "\n", settings(max_examples=10**6)
-    )
+    find_any(st.from_regex(pattern), lambda s: s == "\n", settings(max_examples=10**6))
 
 
 @pytest.mark.parametrize("pattern", [re.compile(b"\\A.\\Z", re.DOTALL), b"(?s)\\A.\\Z"])
 def test_any_with_dotall_generate_newline_binary(pattern):
-    find_any(
-        st.from_regex(pattern), lambda s: s == b"\n", settings(max_examples=10**6)
-    )
+    find_any(st.from_regex(pattern), lambda s: s == b"\n", settings(max_examples=10**6))
 
 
 @pytest.mark.parametrize(
@@ -258,7 +262,9 @@ def test_can_handle_boundaries_nested(s):
 def test_groupref_not_shared_between_regex():
     # If group references are (incorrectly!) shared between regex, this would
     # fail as the would only be one reference.
-    st.tuples(st.from_regex("(a)\\1"), st.from_regex("(b)\\1")).example()
+    check_can_generate_examples(
+        st.tuples(st.from_regex("(a)\\1"), st.from_regex("(b)\\1"))
+    )
 
 
 @pytest.mark.skipif(
@@ -268,8 +274,8 @@ def test_groupref_not_shared_between_regex():
 @given(st.data())
 def test_group_ref_is_not_shared_between_identical_regex(data):
     pattern = re.compile("^(.+)\\1\\Z", re.UNICODE)
-    x = data.draw(base_regex_strategy(pattern))
-    y = data.draw(base_regex_strategy(pattern))
+    x = data.draw(base_regex_strategy(pattern, alphabet=st.characters()))
+    y = data.draw(base_regex_strategy(pattern, alphabet=st.characters()))
     assume(x != y)
     assert pattern.match(x).end() == len(x)
     assert pattern.match(y).end() == len(y)
@@ -277,9 +283,11 @@ def test_group_ref_is_not_shared_between_identical_regex(data):
 
 @given(st.data())
 def test_does_not_leak_groups(data):
-    a = data.draw(base_regex_strategy(re.compile("^(a)\\Z")))
+    a = data.draw(base_regex_strategy(re.compile("^(a)\\Z"), alphabet=st.characters()))
     assert a == "a"
-    b = data.draw(base_regex_strategy(re.compile("^(?(1)a|b)(.)\\Z")))
+    b = data.draw(
+        base_regex_strategy(re.compile("^(?(1)a|b)(.)\\Z"), alphabet=st.characters())
+    )
     assert b[0] == "b"
 
 
@@ -288,7 +296,7 @@ def test_positive_lookbehind():
 
 
 def test_positive_lookahead():
-    st.from_regex("a(?=bc).*").filter(lambda s: s.startswith("abc")).example()
+    find_any(st.from_regex("a(?=bc).*"), lambda s: s.startswith("abc"))
 
 
 def test_negative_lookbehind():
@@ -421,7 +429,6 @@ def test_fullmatch_generates_example(pattern, matching_str):
     find_any(
         st.from_regex(pattern, fullmatch=True),
         lambda s: s == matching_str,
-        settings(max_examples=10**6),
     )
 
 
@@ -469,6 +476,16 @@ def test_internals_can_disable_newline_from_dollar_for_jsonschema():
     pattern = "^abc$"
     find_any(st.from_regex(pattern), lambda s: s == "abc\n")
     assert_all_examples(
-        regex_strategy(pattern, False, _temp_jsonschema_hack_no_end_newline=True),
+        regex_strategy(
+            pattern,
+            False,
+            alphabet=st.characters(),
+            _temp_jsonschema_hack_no_end_newline=True,
+        ),
         lambda s: s == "abc",
     )
+
+
+@given(st.from_regex(r"[^.].*", alphabet=st.sampled_from("abc") | st.just(".")))
+def test_can_pass_union_for_alphabet(_):
+    pass

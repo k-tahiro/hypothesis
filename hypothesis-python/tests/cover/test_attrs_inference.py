@@ -8,6 +8,7 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import sys
 import typing
 
 import attr
@@ -15,6 +16,8 @@ import pytest
 
 from hypothesis import given, strategies as st
 from hypothesis.errors import ResolutionFailed
+
+from tests.common.debug import check_can_generate_examples
 
 
 @attr.s
@@ -47,9 +50,9 @@ class Inferrables:
         validator=[attr.validators.in_("abcd"), attr.validators.in_(["ab", "cd"])]
     )
 
-    typing_list = attr.ib(type=typing.List[int])
-    typing_list_of_list = attr.ib(type=typing.List[typing.List[int]])
-    typing_dict = attr.ib(type=typing.Dict[str, int])
+    typing_list = attr.ib(type=list[int])
+    typing_list_of_list = attr.ib(type=list[list[int]])
+    typing_dict = attr.ib(type=dict[str, int])
     typing_optional = attr.ib(type=typing.Optional[bool])
     typing_union = attr.ib(type=typing.Union[str, int])
 
@@ -83,9 +86,50 @@ def test_attrs_inference_from_type(c):
 @pytest.mark.parametrize("c", [Required, UnhelpfulConverter])
 def test_cannot_infer(c):
     with pytest.raises(ResolutionFailed):
-        st.builds(c).example()
+        check_can_generate_examples(st.builds(c))
 
 
 def test_cannot_infer_takes_self():
     with pytest.raises(ResolutionFailed):
-        st.builds(Inferrables, has_default_factory_takes_self=...).example()
+        check_can_generate_examples(
+            st.builds(Inferrables, has_default_factory_takes_self=...)
+        )
+
+
+@attr.s
+class HasPrivateAttribute:
+    _x: int = attr.ib()
+
+
+skip_on_314 = pytest.mark.skipif(sys.version_info[:2] >= (3, 14), reason="FIXME-py314")
+
+
+@pytest.mark.parametrize("s", [st.just(42), pytest.param(..., marks=skip_on_314)])
+def test_private_attribute(s):
+    check_can_generate_examples(st.builds(HasPrivateAttribute, x=s))
+
+
+@skip_on_314
+def test_private_attribute_underscore_fails():
+    with pytest.raises(TypeError, match="unexpected keyword argument '_x'"):
+        check_can_generate_examples(st.builds(HasPrivateAttribute, _x=st.just(42)))
+
+
+@skip_on_314
+def test_private_attribute_underscore_infer_fails():
+    # this has a slightly different failure case, because it goes through
+    # attrs-specific resolution logic.
+    with pytest.raises(
+        TypeError, match="Unexpected keyword argument _x for attrs class"
+    ):
+        check_can_generate_examples(st.builds(HasPrivateAttribute, _x=...))
+
+
+@attr.s
+class HasAliasedAttribute:
+    x: int = attr.ib(alias="crazyname")
+
+
+@pytest.mark.parametrize("s", [st.just(42), pytest.param(..., marks=skip_on_314)])
+def test_aliased_attribute(s):
+    check_can_generate_examples(st.builds(HasAliasedAttribute, crazyname=s))

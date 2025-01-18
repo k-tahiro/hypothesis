@@ -11,12 +11,12 @@
 import datetime as dt
 from uuid import UUID
 
+import django
 from django.conf import settings as django_settings
 from django.contrib.auth.models import User
 
-from hypothesis import HealthCheck, assume, given, settings
-from hypothesis.control import current_build_context, reject
-from hypothesis.errors import HypothesisException, InvalidArgument
+from hypothesis import HealthCheck, assume, given, settings, strategies as st
+from hypothesis.errors import InvalidArgument
 from hypothesis.extra.django import (
     TestCase,
     TransactionTestCase,
@@ -24,8 +24,9 @@ from hypothesis.extra.django import (
     register_field_strategy,
 )
 from hypothesis.internal.conjecture.data import ConjectureData
-from hypothesis.strategies import binary, just, lists
+from hypothesis.strategies import just, lists
 
+from tests.common.debug import check_can_generate_examples
 from tests.django.toystore.models import (
     Car,
     Company,
@@ -42,6 +43,7 @@ from tests.django.toystore.models import (
     RestrictedFields,
     SelfLoop,
     Store,
+    UserSpecifiedAutoId,
 )
 
 register_field_strategy(CustomishField, just("a"))
@@ -100,15 +102,18 @@ class TestGetsBasicModels(TestCase):
         assert x.customish == "a"
 
     def test_mandatory_fields_are_mandatory(self):
-        self.assertRaises(InvalidArgument, from_model(Store).example)
+        with self.assertRaises(InvalidArgument):
+            check_can_generate_examples(from_model(Store))
 
     def test_mandatory_computed_fields_are_mandatory(self):
         with self.assertRaises(InvalidArgument):
-            from_model(MandatoryComputed).example()
+            check_can_generate_examples(from_model(MandatoryComputed))
 
     def test_mandatory_computed_fields_may_not_be_provided(self):
-        mc = from_model(MandatoryComputed, company=from_model(Company))
-        self.assertRaises(RuntimeError, mc.example)
+        with self.assertRaises(RuntimeError):
+            check_can_generate_examples(
+                from_model(MandatoryComputed, company=from_model(Company))
+            )
 
     @given(from_model(CustomishDefault, customish=...))
     def test_customish_default_overridden_by_infer(self, x):
@@ -140,30 +145,26 @@ class TestGetsBasicModels(TestCase):
         # regression test for #1045.  Company just has a convenient CharField.
         assert "\x00" not in x.name
 
-    @given(binary(min_size=10))
-    def test_foreign_key_primary(self, buf):
+    @given(st.data())
+    def test_foreign_key_primary(self, data):
         # Regression test for #1307
         company_strategy = from_model(Company, name=just("test"))
         strategy = from_model(
             CompanyExtension, company=company_strategy, self_modifying=just(2)
         )
-        context = current_build_context()
-        try:
-            context.data = ConjectureData.for_buffer(buf)
-            context.data.draw(strategy)
-        except HypothesisException:
-            reject()
-        # Draw again with the same buffer. This will cause a duplicate
+        data.draw(strategy)
+
+        # Draw again with the same choice sequence. This will cause a duplicate
         # primary key.
-        context.data = ConjectureData.for_buffer(buf)
-        context.data.draw(strategy)
+        d = ConjectureData.for_choices(data.conjecture_data.choices)
+        d.draw(strategy)
         assert CompanyExtension.objects.all().count() == 1
 
 
 class TestsNeedingRollback(TransactionTestCase):
     def test_can_get_examples(self):
         for _ in range(200):
-            from_model(Company).example()
+            check_can_generate_examples(from_model(Company))
 
 
 class TestRestrictedFields(TestCase):
@@ -198,3 +199,32 @@ class TestPosOnlyArg(TestCase):
         self.assertRaises(TypeError, from_model)
         self.assertRaises(TypeError, from_model, Car, None)
         self.assertRaises(TypeError, from_model, model=Customer)
+
+
+class TestUserSpecifiedAutoId(TestCase):
+    @given(from_model(UserSpecifiedAutoId))
+    def test_user_specified_auto_id(self, user_specified_auto_id):
+        self.assertIsInstance(user_specified_auto_id, UserSpecifiedAutoId)
+        self.assertIsNotNone(user_specified_auto_id.pk)
+
+
+if django.VERSION >= (5, 0, 0):
+    from tests.django.toystore.models import Pizza
+
+    class TestModelWithGeneratedField(TestCase):
+        @given(from_model(Pizza))
+        def test_create_pizza(self, pizza):
+            """
+            Strategies are not inferred for GeneratedField.
+            """
+
+            # Check we generate valid objects.
+            pizza.full_clean()
+
+            # Refresh the instance from the database to make sure the
+            # generated fields are populated correctly.
+            pizza.refresh_from_db()
+
+            # Check the expected types of the generated fields.
+            self.assertIsInstance(pizza.slice_area, float)
+            self.assertIsInstance(pizza.total_area, float)

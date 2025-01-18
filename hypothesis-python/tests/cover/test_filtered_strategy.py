@@ -15,12 +15,10 @@ from hypothesis.strategies._internal.strategies import FilteredStrategy
 
 def test_filter_iterations_are_marked_as_discarded():
     variable_equal_to_zero = 0  # non-local references disables filter-rewriting
-    x = st.integers(0, 255).filter(lambda x: x == variable_equal_to_zero)
+    x = st.integers().filter(lambda x: x == variable_equal_to_zero)
 
-    data = ConjectureData.for_buffer([0, 2, 1, 0])
-
+    data = ConjectureData.for_choices([1, 0])
     assert data.draw(x) == 0
-
     assert data.has_discards
 
 

@@ -14,7 +14,6 @@ import pytest
 
 from hypothesis import settings, strategies as st
 from hypothesis.internal.compat import ceil
-from hypothesis.internal.conjecture import utils as cu
 from hypothesis.internal.conjecture.engine import ConjectureData, ConjectureRunner
 from hypothesis.strategies._internal import SearchStrategy
 
@@ -28,7 +27,7 @@ class Poisoned(SearchStrategy):
         self.__ints = st.integers(0, 10)
 
     def do_draw(self, data):
-        if cu.biased_coin(data, self.__poison_chance):
+        if data.draw_boolean(self.__poison_chance):
             return POISON
         else:
             return data.draw(self.__ints)
@@ -68,7 +67,7 @@ TRIAL_SETTINGS = settings(max_examples=LOTS, database=None)
 @pytest.mark.parametrize("size", [5, 10, 20])
 @pytest.mark.parametrize("p", [0.01, 0.1])
 @pytest.mark.parametrize("strategy_class", [LinearLists, Matrices])
-def test_minimal_poisoned_containers(seed, size, p, strategy_class, monkeypatch):
+def test_minimal_poisoned_containers(seed, size, p, strategy_class):
     elements = Poisoned(p)
     strategy = strategy_class(elements, size)
 
@@ -83,5 +82,5 @@ def test_minimal_poisoned_containers(seed, size, p, strategy_class, monkeypatch)
     )
     runner.run()
     (v,) = runner.interesting_examples.values()
-    result = ConjectureData.for_buffer(v.buffer).draw(strategy)
+    result = ConjectureData.for_choices(v.choices).draw(strategy)
     assert len(result) == 1

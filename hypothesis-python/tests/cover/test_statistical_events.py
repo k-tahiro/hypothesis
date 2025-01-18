@@ -20,6 +20,7 @@ from hypothesis import (
     event,
     example,
     given,
+    reject,
     settings,
     stateful,
     strategies as st,
@@ -114,7 +115,7 @@ def test_exact_timing():
         time.sleep(0.5)
 
     stats = describe_statistics(call_for_statistics(test))
-    assert "~ 529ms" in stats
+    assert "~ 500ms" in stats
 
 
 def test_apparently_instantaneous_tests():
@@ -129,14 +130,15 @@ def test_apparently_instantaneous_tests():
 
 
 def test_flaky_exit():
-    first = [True]
+    first = True
 
     @settings(derandomize=True)
     @given(st.integers())
     def test(i):
+        nonlocal first
         if i > 1001:
-            if first[0]:
-                first[0] = False
+            if first:
+                first = False
                 print("Hi")
                 raise AssertionError
 
@@ -206,7 +208,9 @@ def test_stateful_states_are_deduped():
             return
 
     stats = call_for_statistics(DemoStateMachine.TestCase().runTest)
-    assert len(unique_events(stats)) <= 2
+    stats = unique_events(stats)
+    stats = [s for s in stats if not s.startswith("invalid because: (internal)")]
+    assert len(stats) <= 2
 
 
 def test_stateful_with_one_of_bundles_states_are_deduped():
@@ -228,11 +232,13 @@ def test_stateful_with_one_of_bundles_states_are_deduped():
             return
 
     stats = call_for_statistics(DemoStateMachine.TestCase().runTest)
-    assert len(unique_events(stats)) <= 4
+    stats = unique_events(stats)
+    stats = [s for s in stats if not s.startswith("invalid because: (internal)")]
+    assert len(stats) <= 4
 
 
 def test_statistics_for_threshold_problem():
-    @settings(max_examples=100)
+    @settings(max_examples=100, database=None)
     @given(st.floats(min_value=0, allow_infinity=False))
     def threshold(error):
         target(error, label="error")
@@ -247,7 +253,7 @@ def test_statistics_for_threshold_problem():
 
 
 def test_statistics_with_events_and_target():
-    @given(st.sampled_from("1234"))
+    @given(st.integers(0, 10_000))
     def test(value):
         event(value)
         target(float(value), label="a target")
@@ -260,3 +266,28 @@ def test_statistics_with_events_and_target():
 @given(st.booleans())
 def test_event_with_non_weakrefable_keys(b):
     event((b,))
+
+
+def test_assume_adds_event_with_function_origin():
+    @given(st.integers())
+    def very_distinguishable_name(n):
+        assume(n > 100)
+
+    stats = call_for_statistics(very_distinguishable_name)
+
+    for tc in stats["generate-phase"]["test-cases"]:
+        for e in tc["events"]:
+            assert "failed to satisfy assume() in very_distinguishable_name" in e
+
+
+def test_reject_adds_event_with_function_origin():
+    @given(st.integers())
+    def very_distinguishable_name(n):
+        if n > 100:
+            reject()
+
+    stats = call_for_statistics(very_distinguishable_name)
+
+    for tc in stats["generate-phase"]["test-cases"]:
+        for e in tc["events"]:
+            assert "reject() in very_distinguishable_name" in e

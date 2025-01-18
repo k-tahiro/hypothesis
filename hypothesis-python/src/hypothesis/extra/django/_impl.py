@@ -11,7 +11,7 @@
 import sys
 import unittest
 from functools import partial
-from typing import TYPE_CHECKING, Optional, Type, Union
+from typing import TYPE_CHECKING, Optional, TypeVar, Union
 
 from django import forms as df, test as dt
 from django.contrib.staticfiles import testing as dst
@@ -29,6 +29,8 @@ elif TYPE_CHECKING:
     from builtins import ellipsis as EllipsisType
 else:
     EllipsisType = type(Ellipsis)
+
+ModelT = TypeVar("ModelT", bound=dm.Model)
 
 
 class HypothesisTestCase:
@@ -64,8 +66,8 @@ class StaticLiveServerTestCase(HypothesisTestCase, dst.StaticLiveServerTestCase)
 
 @defines_strategy()
 def from_model(
-    model: Type[dm.Model], /, **field_strategies: Union[st.SearchStrategy, EllipsisType]
-) -> st.SearchStrategy:
+    model: type[ModelT], /, **field_strategies: Union[st.SearchStrategy, EllipsisType]
+) -> st.SearchStrategy[ModelT]:
     """Return a strategy for examples of ``model``.
 
     .. warning::
@@ -102,6 +104,8 @@ def from_model(
         if (
             name not in field_strategies
             and not field.auto_created
+            and not isinstance(field, dm.AutoField)
+            and not isinstance(field, getattr(dm, "GeneratedField", ()))
             and field.default is dm.fields.NOT_PROVIDED
         ):
             field_strategies[name] = from_field(field)
@@ -132,7 +136,7 @@ def _models_impl(draw, strat):
 
 @defines_strategy()
 def from_form(
-    form: Type[df.Form],
+    form: type[df.Form],
     form_kwargs: Optional[dict] = None,
     **field_strategies: Union[st.SearchStrategy, EllipsisType],
 ) -> st.SearchStrategy[df.Form]:
@@ -200,7 +204,7 @@ def from_form(
 
     return _forms_impl(
         st.builds(
-            partial(form, **form_kwargs),
+            partial(form, **form_kwargs),  # type: ignore
             data=st.fixed_dictionaries(field_strategies),  # type: ignore
         )
     )

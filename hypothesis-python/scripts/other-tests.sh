@@ -26,12 +26,18 @@ $PYTEST tests/dpcontracts/
 pip uninstall -y dpcontracts
 
 pip install "$(grep 'fakeredis==' ../requirements/coverage.txt)"
+pip install "$(grep 'typing-extensions==' ../requirements/coverage.txt)"
 $PYTEST tests/redis/
 pip uninstall -y redis fakeredis
 
-pip install "$(grep 'typing-extensions==' ../requirements/coverage.txt)"
 $PYTEST tests/typing_extensions/
-pip uninstall -y typing_extensions
+if [[ "$HYPOTHESIS_PROFILE" != "crosshair" ]]; then
+  pip uninstall -y typing_extensions
+fi
+
+pip install "$(grep 'annotated-types==' ../requirements/coverage.txt)"
+$PYTEST tests/test_annotated_types.py
+pip uninstall -y annotated-types
 
 pip install ".[lark]"
 pip install "$(grep -oE 'lark>=([0-9.]+)' ../hypothesis-python/setup.py | tr '>' =)"
@@ -43,27 +49,22 @@ pip uninstall -y lark
 if [ "$(python -c $'import platform, sys; print(sys.version_info.releaselevel == \'final\' and platform.python_implementation() not in ("PyPy", "GraalVM"))')" = "True" ] ; then
   pip install ".[codemods,cli]"
   $PYTEST tests/codemods/
-  pip install "$(grep -E 'black(==| @)' ../requirements/coverage.txt)"
-  if [ "$(python -c 'import sys; print(sys.version_info[:2] >= (3, 9))')" = "True" ] ; then
-    $PYTEST tests/patching/
-  fi
-  pip uninstall -y libcst
 
-  if [ "$(python -c 'import sys; print(sys.version_info[:2] == (3, 8))')" = "True" ] ; then
-    # Per NEP-29, this is the last version to support Python 3.8
-    pip install numpy==1.24.3
+  if [ "$(python -c 'import sys; print(sys.version_info[:2] == (3, 9))')" = "True" ] ; then
+    # Per NEP-29, this is the last version to support Python 3.9
+    pip install numpy==2.0.2
   else
     pip install "$(grep 'numpy==' ../requirements/coverage.txt)"
   fi
 
-  case "$(python -c 'import platform; print(platform.python_implementation())')" in
-    PyPy|GraalVM)
-      ;;
-    *)
-      $PYTEST tests/array_api
-      $PYTEST tests/numpy
-  esac
+  pip install "$(grep -E 'black(==| @)' ../requirements/coverage.txt)"
+  $PYTEST tests/patching/
+  pip uninstall -y libcst
 
   $PYTEST tests/ghostwriter/
-  pip uninstall -y black numpy
+  pip uninstall -y black
+
+  if [ "$HYPOTHESIS_PROFILE" != "crosshair" ] && [ "$(python -c "import platform; print(platform.python_implementation() not in {'PyPy', 'GraalVM'})")" = "True" ] ; then
+    $PYTEST tests/array_api tests/numpy
+  fi
 fi

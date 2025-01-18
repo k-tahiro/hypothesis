@@ -9,44 +9,55 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import abc
-import binascii
 import json
 import os
+import struct
 import sys
+import tempfile
 import warnings
+import weakref
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from hashlib import sha384
 from os import getenv
 from pathlib import Path, PurePath
-from typing import Dict, Iterable, Optional, Set
+from queue import Queue
+from threading import Thread
+from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zipfile import BadZipFile, ZipFile
 
-from hypothesis.configuration import mkdir_p, storage_directory
+from hypothesis.configuration import storage_directory
 from hypothesis.errors import HypothesisException, HypothesisWarning
+from hypothesis.internal.conjecture.choice import ChoiceT
 from hypothesis.utils.conventions import not_set
 
 __all__ = [
     "DirectoryBasedExampleDatabase",
     "ExampleDatabase",
+    "GitHubArtifactDatabase",
     "InMemoryExampleDatabase",
     "MultiplexedDatabase",
     "ReadOnlyDatabase",
-    "GitHubArtifactDatabase",
 ]
 
 
-def _usable_dir(path):
+def _usable_dir(path: os.PathLike) -> bool:
     """
-    Returns True iff the desired path can be used as database path because
+    Returns True if the desired path can be used as database path because
     either the directory exists and can be used, or its root directory can
     be used and we can make the directory as needed.
     """
-    while not os.path.exists(path):
-        # Loop terminates because the root dir ('/' on unix) always exists.
-        path = os.path.dirname(path)
-    return os.path.isdir(path) and os.access(path, os.R_OK | os.W_OK | os.X_OK)
+    path = Path(path)
+    try:
+        while not path.exists():
+            # Loop terminates because the root dir ('/' on unix) always exists.
+            path = path.parent
+        return path.is_dir() and os.access(path, os.R_OK | os.W_OK | os.X_OK)
+    except PermissionError:
+        return False
 
 
 def _db_for_path(path=None):
@@ -58,7 +69,7 @@ def _db_for_path(path=None):
                 "https://hypothesis.readthedocs.io/en/latest/settings.html#settings-profiles"
             )
 
-        path = storage_directory("examples")
+        path = storage_directory("examples", intent_to_write=False)
         if not _usable_dir(path):  # pragma: no cover
             warnings.warn(
                 "The database setting is not configured, and the default "
@@ -70,7 +81,7 @@ def _db_for_path(path=None):
             return InMemoryExampleDatabase()
     if path in (None, ":memory:"):
         return InMemoryExampleDatabase()
-    return DirectoryBasedExampleDatabase(str(path))
+    return DirectoryBasedExampleDatabase(path)
 
 
 class _EDMeta(abc.ABCMeta):
@@ -188,52 +199,57 @@ class DirectoryBasedExampleDatabase(ExampleDatabase):
     the :class:`~hypothesis.database.MultiplexedDatabase` helper.
     """
 
-    def __init__(self, path: str) -> None:
-        self.path = path
-        self.keypaths: Dict[bytes, str] = {}
+    def __init__(self, path: os.PathLike) -> None:
+        self.path = Path(path)
+        self.keypaths: dict[bytes, Path] = {}
 
     def __repr__(self) -> str:
         return f"DirectoryBasedExampleDatabase({self.path!r})"
 
-    def _key_path(self, key: bytes) -> str:
+    def _key_path(self, key: bytes) -> Path:
         try:
             return self.keypaths[key]
         except KeyError:
             pass
-        directory = os.path.join(self.path, _hash(key))
-        self.keypaths[key] = directory
-        return directory
+        self.keypaths[key] = self.path / _hash(key)
+        return self.keypaths[key]
 
     def _value_path(self, key, value):
-        return os.path.join(self._key_path(key), _hash(value))
+        return self._key_path(key) / _hash(value)
 
     def fetch(self, key: bytes) -> Iterable[bytes]:
         kp = self._key_path(key)
-        if not os.path.exists(kp):
+        if not kp.is_dir():
             return
         for path in os.listdir(kp):
             try:
-                with open(os.path.join(kp, path), "rb") as i:
-                    yield i.read()
+                yield (kp / path).read_bytes()
             except OSError:
                 pass
 
     def save(self, key: bytes, value: bytes) -> None:
         # Note: we attempt to create the dir in question now. We
         # already checked for permissions, but there can still be other issues,
-        # e.g. the disk is full
-        mkdir_p(self._key_path(key))
-        path = self._value_path(key, value)
-        if not os.path.exists(path):
-            suffix = binascii.hexlify(os.urandom(16)).decode("ascii")
-            tmpname = path + "." + suffix
-            with open(tmpname, "wb") as o:
-                o.write(value)
-            try:
-                os.rename(tmpname, path)
-            except OSError:  # pragma: no cover
-                os.unlink(tmpname)
-            assert not os.path.exists(tmpname)
+        # e.g. the disk is full, or permissions might have been changed.
+        try:
+            self._key_path(key).mkdir(exist_ok=True, parents=True)
+            path = self._value_path(key, value)
+            if not path.exists():
+                # to mimic an atomic write, create and write in a temporary
+                # directory, and only move to the final path after. This avoids
+                # any intermediate state where the file is created (and empty)
+                # but not yet written to.
+                fd, tmpname = tempfile.mkstemp()
+                tmppath = Path(tmpname)
+                os.write(fd, value)
+                os.close(fd)
+                try:
+                    tmppath.rename(path)
+                except OSError:  # pragma: no cover
+                    tmppath.unlink()
+                assert not tmppath.exists()
+        except OSError:  # pragma: no cover
+            pass
 
     def move(self, src: bytes, dest: bytes, value: bytes) -> None:
         if src == dest:
@@ -250,7 +266,7 @@ class DirectoryBasedExampleDatabase(ExampleDatabase):
 
     def delete(self, key: bytes, value: bytes) -> None:
         try:
-            os.unlink(self._value_path(key, value))
+            self._value_path(key, value).unlink()
         except OSError:
             pass
 
@@ -350,9 +366,9 @@ class GitHubArtifactDatabase(ExampleDatabase):
     .. note::
         You must provide ``GITHUB_TOKEN`` as an environment variable. In CI, Github Actions provides
         this automatically, but it needs to be set manually for local usage. In a developer machine,
-        this would usually be a `Personal Access Token <https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token>`_.
-        If the repository is private, it's necessary for the token to have `repo` scope
-        in the case of a classic token, or `actions:read` in the case of a fine-grained token.
+        this would usually be a `Personal Access Token <https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens>`_.
+        If the repository is private, it's necessary for the token to have ``repo`` scope
+        in the case of a classic token, or ``actions:read`` in the case of a fine-grained token.
 
 
     In most cases, this will be used
@@ -402,9 +418,9 @@ class GitHubArtifactDatabase(ExampleDatabase):
     does not support downloading artifacts from previous workflow runs.
 
     The database automatically implements a simple file-based cache with a default expiration period
-    of 1 day. You can adjust this through the `cache_timeout` property.
+    of 1 day. You can adjust this through the ``cache_timeout`` property.
 
-    For mono-repo support, you can provide a unique `artifact_name` (e.g. `hypofuzz-example-db-frontend`).
+    For mono-repo support, you can provide a unique ``artifact_name`` (e.g. ``hypofuzz-example-db-frontend``).
     """
 
     def __init__(
@@ -413,14 +429,12 @@ class GitHubArtifactDatabase(ExampleDatabase):
         repo: str,
         artifact_name: str = "hypothesis-example-db",
         cache_timeout: timedelta = timedelta(days=1),
-        path: Optional[Path] = None,
+        path: Optional[os.PathLike] = None,
     ):
         self.owner = owner
         self.repo = repo
         self.artifact_name = artifact_name
         self.cache_timeout = cache_timeout
-
-        self.keypaths: Dict[bytes, PurePath] = {}
 
         # Get the GitHub token from the environment
         # It's unnecessary to use a token if the repo is public
@@ -431,7 +445,7 @@ class GitHubArtifactDatabase(ExampleDatabase):
                 storage_directory(f"github-artifacts/{self.artifact_name}/")
             )
         else:
-            self.path = path
+            self.path = Path(path)
 
         # We don't want to initialize the cache until we need to
         self._initialized: bool = False
@@ -441,7 +455,7 @@ class GitHubArtifactDatabase(ExampleDatabase):
         # .hypothesis/github-artifacts/<artifact-name>/<modified_isoformat>.zip
         self._artifact: Optional[Path] = None
         # This caches the artifact structure
-        self._access_cache: Optional[Dict[PurePath, Set[PurePath]]] = None
+        self._access_cache: Optional[dict[PurePath, set[PurePath]]] = None
 
         # Message to display if user doesn't wrap around ReadOnlyDatabase
         self._read_only_message = (
@@ -499,8 +513,10 @@ class GitHubArtifactDatabase(ExampleDatabase):
         self._initialized = True
 
     def _initialize_db(self) -> None:
+        # Trigger warning that we suppressed earlier by intent_to_write=False
+        storage_directory(self.path.name)
         # Create the cache directory if it doesn't exist
-        mkdir_p(str(self.path))
+        self.path.mkdir(exist_ok=True, parents=True)
 
         # Get all artifacts
         cached_artifacts = sorted(
@@ -619,8 +635,7 @@ class GitHubArtifactDatabase(ExampleDatabase):
         timestamp = datetime.now(timezone.utc).isoformat().replace(":", "_")
         artifact_path = self.path / f"{timestamp}.zip"
         try:
-            with open(artifact_path, "wb") as f:
-                f.write(artifact_bytes)
+            artifact_path.write_bytes(artifact_bytes)
         except OSError:
             warnings.warn(
                 "Could not save the latest artifact from GitHub. ",
@@ -631,15 +646,10 @@ class GitHubArtifactDatabase(ExampleDatabase):
 
         return artifact_path
 
-    def _key_path(self, key: bytes) -> PurePath:
-        try:
-            return self.keypaths[key]
-        except KeyError:
-            pass
-
-        directory = PurePath(_hash(key) + "/")
-        self.keypaths[key] = directory
-        return directory
+    @staticmethod
+    @lru_cache
+    def _key_path(key: bytes) -> PurePath:
+        return PurePath(_hash(key) + "/")
 
     def fetch(self, key: bytes) -> Iterable[bytes]:
         if self._disabled:
@@ -671,3 +681,134 @@ class GitHubArtifactDatabase(ExampleDatabase):
 
     def delete(self, key: bytes, value: bytes) -> None:
         raise RuntimeError(self._read_only_message)
+
+
+class BackgroundWriteDatabase(ExampleDatabase):
+    """A wrapper which defers writes on the given database to a background thread.
+
+    Calls to :meth:`~hypothesis.database.ExampleDatabase.fetch` wait for any
+    enqueued writes to finish before fetching from the database.
+    """
+
+    def __init__(self, db: ExampleDatabase) -> None:
+        self._db = db
+        self._queue: Queue[tuple[str, tuple[bytes, ...]]] = Queue()
+        self._thread = Thread(target=self._worker, daemon=True)
+        self._thread.start()
+        # avoid an unbounded timeout during gc. 0.1 should be plenty for most
+        # use cases.
+        weakref.finalize(self, self._join, 0.1)
+
+    def __repr__(self) -> str:
+        return f"BackgroundWriteDatabase({self._db!r})"
+
+    def _worker(self) -> None:
+        while True:
+            method, args = self._queue.get()
+            getattr(self._db, method)(*args)
+            self._queue.task_done()
+
+    def _join(self, timeout: Optional[float] = None) -> None:
+        # copy of Queue.join with a timeout. https://bugs.python.org/issue9634
+        with self._queue.all_tasks_done:
+            while self._queue.unfinished_tasks:
+                self._queue.all_tasks_done.wait(timeout)
+
+    def fetch(self, key: bytes) -> Iterable[bytes]:
+        self._join()
+        return self._db.fetch(key)
+
+    def save(self, key: bytes, value: bytes) -> None:
+        self._queue.put(("save", (key, value)))
+
+    def delete(self, key: bytes, value: bytes) -> None:
+        self._queue.put(("delete", (key, value)))
+
+    def move(self, src: bytes, dest: bytes, value: bytes) -> None:
+        self._queue.put(("move", (src, dest, value)))
+
+
+def ir_to_bytes(ir: Iterable[ChoiceT], /) -> bytes:
+    """Serialize a list of IR elements to a bytestring.  Inverts ir_from_bytes."""
+    # We use a custom serialization format for this, which might seem crazy - but our
+    # data is a flat sequence of elements, and standard tools like protobuf or msgpack
+    # don't deal well with e.g. nonstandard bit-pattern-NaNs, or invalid-utf8 unicode.
+    #
+    # We simply encode each element with a metadata byte, if needed a uint16 size, and
+    # then the payload bytes.  For booleans, the payload is inlined into the metadata.
+    parts = []
+    for elem in ir:
+        if isinstance(elem, bool):
+            # `000_0000v` - tag zero, low bit payload.
+            parts.append(b"\1" if elem else b"\0")
+            continue
+
+        # `tag_ssss [uint16 size?] [payload]`
+        if isinstance(elem, float):
+            tag = 1 << 5
+            elem = struct.pack("!d", elem)
+        elif isinstance(elem, int):
+            tag = 2 << 5
+            elem = elem.to_bytes(1 + elem.bit_length() // 8, "big", signed=True)
+        elif isinstance(elem, bytes):
+            tag = 3 << 5
+        else:
+            assert isinstance(elem, str)
+            tag = 4 << 5
+            elem = elem.encode(errors="surrogatepass")
+
+        size = len(elem)
+        if size < 0b11111:
+            parts.append((tag | size).to_bytes(1, "big"))
+        else:
+            parts.append((tag | 0b11111).to_bytes(1, "big"))
+            parts.append(struct.pack("!H", size))
+        parts.append(elem)
+
+    return b"".join(parts)
+
+
+def _ir_from_bytes(buffer: bytes, /) -> tuple[ChoiceT, ...]:
+    # See above for an explanation of the format.
+    parts: list[ChoiceT] = []
+    idx = 0
+    while idx < len(buffer):
+        tag = buffer[idx] >> 5
+        size = buffer[idx] & 0b11111
+        idx += 1
+
+        if tag == 0:
+            parts.append(bool(size))
+            continue
+        if size == 0b11111:
+            (size,) = struct.unpack_from("!H", buffer, offset=idx)
+            idx += 2
+        chunk = buffer[idx : idx + size]
+        idx += size
+
+        if tag == 1:
+            assert size == 8, "expected float64"
+            parts.extend(struct.unpack("!d", chunk))
+        elif tag == 2:
+            parts.append(int.from_bytes(chunk, "big", signed=True))
+        elif tag == 3:
+            parts.append(chunk)
+        else:
+            assert tag == 4
+            parts.append(chunk.decode(errors="surrogatepass"))
+    return tuple(parts)
+
+
+def ir_from_bytes(buffer: bytes, /) -> Optional[tuple[ChoiceT, ...]]:
+    """
+    Deserialize a bytestring to a tuple of choices. Inverts ir_to_bytes.
+
+    Returns None if the given bytestring is not a valid serialization of choice
+    sequences.
+    """
+    try:
+        return _ir_from_bytes(buffer)
+    except Exception:
+        # deserialization error, eg because our format changed or someone put junk
+        # data in the db.
+        return None

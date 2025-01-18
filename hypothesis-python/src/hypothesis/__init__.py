@@ -15,7 +15,8 @@ It verifies your code against a wide range of input and minimizes any
 failing examples it finds.
 """
 
-import hypothesis._error_if_old  # noqa  # imported for side-effect of nice error
+import _hypothesis_globals
+
 from hypothesis._settings import HealthCheck, Phase, Verbosity, settings
 from hypothesis.control import (
     assume,
@@ -35,6 +36,8 @@ __all__ = [
     "HealthCheck",
     "Phase",
     "Verbosity",
+    "__version__",
+    "__version_info__",
     "assume",
     "currently_in_test_context",
     "event",
@@ -49,9 +52,10 @@ __all__ = [
     "seed",
     "settings",
     "target",
-    "__version__",
-    "__version_info__",
 ]
 
 run()
 del run
+
+_hypothesis_globals.in_initialization -= 1
+del _hypothesis_globals

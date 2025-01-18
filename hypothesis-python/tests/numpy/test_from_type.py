@@ -19,7 +19,7 @@ from hypothesis.extra.numpy import ArrayLike, NDArray, _NestedSequence, _Support
 from hypothesis.strategies import builds, from_type
 
 from .test_from_dtype import STANDARD_TYPES
-from tests.common.debug import find_any
+from tests.common.debug import assert_simple_property, find_any
 
 STANDARD_TYPES_TYPE = [dtype.type for dtype in STANDARD_TYPES]
 
@@ -49,7 +49,7 @@ def test_resolves_and_varies_numpy_scalar_type(typ):
 @pytest.mark.parametrize("atype", [np.ndarray, NDArray])
 def test_resolves_unspecified_array_type(atype):
     if atype is not None:
-        assert isinstance(from_type(atype).example(), np.ndarray)
+        assert_simple_property(from_type(atype), lambda v: isinstance(v, np.ndarray))
 
 
 def workaround(dtype):
@@ -59,27 +59,38 @@ def workaround(dtype):
     return dtype
 
 
+# https://numpy.org/devdocs/release/1.22.0-notes.html#ndarray-dtype-and-number-are-now-runtime-subscriptable
 @pytest.mark.skipif(
-    sys.version_info[:2] < (3, 9),
-    reason="Type subscription requires python >= 3.9",
+    tuple(int(x) for x in np.__version__.split(".")[:2]) < (1, 22), reason="see comment"
 )
 @pytest.mark.parametrize("typ", [workaround(t) for t in STANDARD_TYPES_TYPE])
 def test_resolves_specified_ndarray_type(typ):
-    arr = from_type(np.ndarray[typ]).example()
-    assert isinstance(arr, np.ndarray)
-    assert arr.dtype.type == typ
+    assert_simple_property(
+        from_type(np.ndarray[typ]),
+        lambda arr: isinstance(arr, np.ndarray) and arr.dtype.type == typ,
+    )
 
-    arr = from_type(np.ndarray[typing.Any, typ]).example()
-    assert isinstance(arr, np.ndarray)
-    assert arr.dtype.type == typ
+    assert_simple_property(
+        from_type(np.ndarray[typing.Any, typ]),
+        lambda arr: isinstance(arr, np.ndarray) and arr.dtype.type == typ,
+    )
 
 
 @pytest.mark.skipif(NDArray is None, **needs_np_typing)
 @pytest.mark.parametrize("typ", [workaround(t) for t in STANDARD_TYPES_TYPE])
 def test_resolves_specified_NDArray_type(typ):
-    arr = from_type(NDArray[typ]).example()
-    assert isinstance(arr, np.ndarray)
-    assert arr.dtype.type == typ
+    assert_simple_property(
+        from_type(NDArray[typ]),
+        lambda arr: isinstance(arr, np.ndarray) and arr.dtype.type == typ,
+    )
+
+
+@pytest.mark.skipif(sys.version_info[:2] <= (3, 9), reason="union op for types")
+@pytest.mark.skipif(NDArray is None, **needs_np_typing)
+def test_resolves_NDArray_with_dtype_union():
+    strat = from_type(NDArray[np.float64 | np.complex128])
+    find_any(strat, lambda arr: arr.dtype == np.dtype("float64"))
+    find_any(strat, lambda arr: arr.dtype == np.dtype("complex128"))
 
 
 @pytest.mark.skipif(ArrayLike is None, **needs_np_typing)

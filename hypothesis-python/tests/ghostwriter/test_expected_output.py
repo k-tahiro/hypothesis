@@ -21,10 +21,13 @@ import collections.abc
 import operator
 import pathlib
 import re
+import subprocess
 import sys
-from typing import Optional, Sequence, Union
+from collections.abc import Sequence
+from typing import Optional, Union
 
 import numpy
+import numpy.typing
 import pytest
 from example_code.future_annotations import (
     add_custom_classes,
@@ -107,15 +110,21 @@ else:
         return sum(items)
 
 
-if sys.version_info[:2] >= (3, 9):
-    CollectionsSequence = collections.abc.Sequence
-else:
-    # in older versions collections.abc was not generic
-    CollectionsSequence = Sequence
-
-
-def sequence_from_collections(items: CollectionsSequence[int]) -> int:
+def sequence_from_collections(items: collections.abc.Sequence[int]) -> int:
     return min(items)
+
+
+if sys.version_info[:2] >= (3, 10):
+
+    def various_numpy_annotations(
+        f: numpy.typing.NDArray[numpy.float64],
+        fc: numpy.typing.NDArray[numpy.float64 | numpy.complex128],
+        union: numpy.typing.NDArray[numpy.float64 | numpy.complex128] | None,
+    ):
+        pass
+
+else:
+    various_numpy_annotations = add
 
 
 # Note: for some of the `expected` outputs, we replace away some small
@@ -123,112 +132,127 @@ def sequence_from_collections(items: CollectionsSequence[int]) -> int:
 @pytest.mark.parametrize(
     "data",
     [
-        ("fuzz_sorted", ghostwriter.fuzz(sorted)),
-        ("fuzz_sorted_with_annotations", ghostwriter.fuzz(sorted, annotate=True)),
-        ("fuzz_with_docstring", ghostwriter.fuzz(with_docstring)),
-        ("fuzz_classmethod", ghostwriter.fuzz(A_Class.a_classmethod)),
-        ("fuzz_staticmethod", ghostwriter.fuzz(A_Class.a_staticmethod)),
-        ("fuzz_ufunc", ghostwriter.fuzz(numpy.add)),
-        ("magic_gufunc", ghostwriter.magic(numpy.matmul)),
-        pytest.param(
-            ("optional_parameter", ghostwriter.magic(optional_parameter)),
-            marks=pytest.mark.skipif("sys.version_info[:2] < (3, 9)"),
+        ("fuzz_sorted", lambda: ghostwriter.fuzz(sorted)),
+        (
+            "fuzz_sorted_with_annotations",
+            lambda: ghostwriter.fuzz(sorted, annotate=True),
+        ),
+        ("fuzz_with_docstring", lambda: ghostwriter.fuzz(with_docstring)),
+        ("fuzz_classmethod", lambda: ghostwriter.fuzz(A_Class.a_classmethod)),
+        ("fuzz_staticmethod", lambda: ghostwriter.fuzz(A_Class.a_staticmethod)),
+        ("fuzz_ufunc", lambda: ghostwriter.fuzz(numpy.add)),
+        ("magic_gufunc", lambda: ghostwriter.magic(numpy.matmul)),
+        ("optional_parameter", lambda: ghostwriter.magic(optional_parameter)),
+        (
+            "optional_union_parameter",
+            lambda: ghostwriter.magic(optional_union_parameter),
+        ),
+        (
+            "union_sequence_parameter",
+            lambda: ghostwriter.magic(union_sequence_parameter),
+        ),
+        (
+            "sequence_from_collections",
+            lambda: ghostwriter.magic(sequence_from_collections),
         ),
         pytest.param(
-            ("optional_parameter_pre_py_3_9", ghostwriter.magic(optional_parameter)),
-            marks=pytest.mark.skipif("sys.version_info[:2] >= (3, 9)"),
-        ),
-        ("optional_union_parameter", ghostwriter.magic(optional_union_parameter)),
-        ("union_sequence_parameter", ghostwriter.magic(union_sequence_parameter)),
-        pytest.param(
-            ("sequence_from_collections", ghostwriter.magic(sequence_from_collections)),
-            marks=pytest.mark.skipif("sys.version_info[:2] < (3, 9)"),
-        ),
-        pytest.param(
-            ("add_custom_classes", ghostwriter.magic(add_custom_classes)),
+            ("add_custom_classes", lambda: ghostwriter.magic(add_custom_classes)),
             marks=pytest.mark.skipif("sys.version_info[:2] < (3, 10)"),
         ),
         pytest.param(
-            ("merge_dicts", ghostwriter.magic(merge_dicts)),
+            ("merge_dicts", lambda: ghostwriter.magic(merge_dicts)),
             marks=pytest.mark.skipif("sys.version_info[:2] < (3, 10)"),
         ),
         pytest.param(
-            ("invalid_types", ghostwriter.magic(invalid_types)),
+            ("invalid_types", lambda: ghostwriter.magic(invalid_types)),
             marks=pytest.mark.skipif("sys.version_info[:2] < (3, 10)"),
         ),
-        ("magic_base64_roundtrip", ghostwriter.magic(base64.b64encode)),
+        ("magic_base64_roundtrip", lambda: ghostwriter.magic(base64.b64encode)),
         (
             "magic_base64_roundtrip_with_annotations",
-            ghostwriter.magic(base64.b64encode, annotate=True),
+            lambda: ghostwriter.magic(base64.b64encode, annotate=True),
         ),
-        ("re_compile", ghostwriter.fuzz(re.compile)),
+        ("re_compile", lambda: ghostwriter.fuzz(re.compile)),
         (
             "re_compile_except",
-            ghostwriter.fuzz(re.compile, except_=re.error)
-            # re.error fixed it's __module__ in Python 3.7
-            .replace("import sre_constants\n", "").replace("sre_constants.", "re."),
+            lambda: ghostwriter.fuzz(re.compile, except_=re.error).replace(
+                "re.PatternError", "re.error"  # changed in Python 3.13
+            ),
         ),
-        ("re_compile_unittest", ghostwriter.fuzz(re.compile, style="unittest")),
+        ("re_compile_unittest", lambda: ghostwriter.fuzz(re.compile, style="unittest")),
         pytest.param(
-            ("base64_magic", ghostwriter.magic(base64)),
+            ("base64_magic", lambda: ghostwriter.magic(base64)),
             marks=pytest.mark.skipif("sys.version_info[:2] >= (3, 10)"),
         ),
-        ("sorted_idempotent", ghostwriter.idempotent(sorted)),
-        ("timsort_idempotent", ghostwriter.idempotent(timsort)),
+        ("sorted_idempotent", lambda: ghostwriter.idempotent(sorted)),
+        ("timsort_idempotent", lambda: ghostwriter.idempotent(timsort)),
         (
             "timsort_idempotent_asserts",
-            ghostwriter.idempotent(timsort, except_=AssertionError),
+            lambda: ghostwriter.idempotent(timsort, except_=AssertionError),
         ),
-        ("eval_equivalent", ghostwriter.equivalent(eval, ast.literal_eval)),
-        ("sorted_self_equivalent", ghostwriter.equivalent(sorted, sorted, sorted)),
+        pytest.param(
+            ("eval_equivalent", lambda: ghostwriter.equivalent(eval, ast.literal_eval)),
+            marks=[pytest.mark.skipif(sys.version_info[:2] >= (3, 13), reason="kw")],
+        ),
+        (
+            "sorted_self_equivalent",
+            lambda: ghostwriter.equivalent(sorted, sorted, sorted),
+        ),
         (
             "sorted_self_equivalent_with_annotations",
-            ghostwriter.equivalent(sorted, sorted, sorted, annotate=True),
+            lambda: ghostwriter.equivalent(sorted, sorted, sorted, annotate=True),
         ),
-        ("addition_op_magic", ghostwriter.magic(add)),
-        ("addition_op_multimagic", ghostwriter.magic(add, operator.add, numpy.add)),
-        ("division_fuzz_error_handler", ghostwriter.fuzz(divide)),
+        ("addition_op_magic", lambda: ghostwriter.magic(add)),
+        ("multiplication_magic", lambda: ghostwriter.magic(operator.mul)),
+        ("matmul_magic", lambda: ghostwriter.magic(operator.matmul)),
+        (
+            "addition_op_multimagic",
+            lambda: ghostwriter.magic(add, operator.add, numpy.add),
+        ),
+        ("division_fuzz_error_handler", lambda: ghostwriter.fuzz(divide)),
         (
             "division_binop_error_handler",
-            ghostwriter.binary_operation(divide, identity=1),
+            lambda: ghostwriter.binary_operation(divide, identity=1),
         ),
         (
             "division_roundtrip_error_handler",
-            ghostwriter.roundtrip(divide, operator.mul),
+            lambda: ghostwriter.roundtrip(divide, operator.mul),
         ),
         (
             "division_roundtrip_error_handler_without_annotations",
-            ghostwriter.roundtrip(divide, operator.mul, annotate=False),
+            lambda: ghostwriter.roundtrip(divide, operator.mul, annotate=False),
         ),
         (
             "division_roundtrip_arithmeticerror_handler",
-            ghostwriter.roundtrip(divide, operator.mul, except_=ArithmeticError),
+            lambda: ghostwriter.roundtrip(
+                divide, operator.mul, except_=ArithmeticError
+            ),
         ),
         (
             "division_roundtrip_typeerror_handler",
-            ghostwriter.roundtrip(divide, operator.mul, except_=TypeError),
+            lambda: ghostwriter.roundtrip(divide, operator.mul, except_=TypeError),
         ),
         (
             "division_operator",
-            ghostwriter.binary_operation(
+            lambda: ghostwriter.binary_operation(
                 operator.truediv, associative=False, commutative=False
             ),
         ),
         (
             "division_operator_with_annotations",
-            ghostwriter.binary_operation(
+            lambda: ghostwriter.binary_operation(
                 operator.truediv, associative=False, commutative=False, annotate=True
             ),
         ),
         (
             "multiplication_operator",
-            ghostwriter.binary_operation(
+            lambda: ghostwriter.binary_operation(
                 operator.mul, identity=1, distributes_over=operator.add
             ),
         ),
         (
             "multiplication_operator_unittest",
-            ghostwriter.binary_operation(
+            lambda: ghostwriter.binary_operation(
                 operator.mul,
                 identity=1,
                 distributes_over=operator.add,
@@ -237,15 +261,17 @@ def sequence_from_collections(items: CollectionsSequence[int]) -> int:
         ),
         (
             "sorted_self_error_equivalent_simple",
-            ghostwriter.equivalent(sorted, sorted, allow_same_errors=True),
+            lambda: ghostwriter.equivalent(sorted, sorted, allow_same_errors=True),
         ),
         (
             "sorted_self_error_equivalent_threefuncs",
-            ghostwriter.equivalent(sorted, sorted, sorted, allow_same_errors=True),
+            lambda: ghostwriter.equivalent(
+                sorted, sorted, sorted, allow_same_errors=True
+            ),
         ),
         (
             "sorted_self_error_equivalent_1error",
-            ghostwriter.equivalent(
+            lambda: ghostwriter.equivalent(
                 sorted,
                 sorted,
                 allow_same_errors=True,
@@ -254,7 +280,7 @@ def sequence_from_collections(items: CollectionsSequence[int]) -> int:
         ),
         (
             "sorted_self_error_equivalent_2error_unittest",
-            ghostwriter.equivalent(
+            lambda: ghostwriter.equivalent(
                 sorted,
                 sorted,
                 allow_same_errors=True,
@@ -262,21 +288,31 @@ def sequence_from_collections(items: CollectionsSequence[int]) -> int:
                 style="unittest",
             ),
         ),
-        ("magic_class", ghostwriter.magic(A_Class)),
+        ("magic_class", lambda: ghostwriter.magic(A_Class)),
         pytest.param(
-            ("magic_builtins", ghostwriter.magic(builtins)),
+            ("magic_builtins", lambda: ghostwriter.magic(builtins)),
             marks=[
                 pytest.mark.skipif(
-                    sys.version_info[:2] not in [(3, 8), (3, 9)],
-                    reason="compile arg new in 3.8, aiter and anext new in 3.10",
+                    sys.version_info[:2] != (3, 10),
+                    reason="often small changes",
                 )
             ],
+        ),
+        pytest.param(
+            (
+                "magic_numpy",
+                lambda: ghostwriter.magic(various_numpy_annotations, annotate=False),
+            ),
+            marks=pytest.mark.skipif(various_numpy_annotations is add, reason="<=3.9"),
         ),
     ],
     ids=lambda x: x[0],
 )
 def test_ghostwriter_example_outputs(update_recorded_outputs, data):
-    name, actual = data
+    name, get_actual = data
+    # ghostwriter computations can be expensive, so defer collection-time
+    # computations until test-time
+    actual = get_actual()
     expected = get_recorded(name, actual * update_recorded_outputs)
     assert actual == expected  # We got the expected source code
     exec(expected, {})  # and there are no SyntaxError or NameErrors
@@ -288,3 +324,25 @@ def test_ghostwriter_on_hypothesis(update_recorded_outputs):
     if sys.version_info[:2] == (3, 10):
         assert actual == expected
     exec(expected, {"not_set": not_set})
+
+
+def test_ghostwriter_suggests_submodules_for_empty_toplevel(
+    tmp_path, update_recorded_outputs
+):
+    foo = tmp_path / "foo"
+    foo.mkdir()
+    (foo / "__init__.py").write_text("from . import bar\n", encoding="utf-8")
+    (foo / "bar.py").write_text("def baz(x: int): ...\n", encoding="utf-8")
+
+    proc = subprocess.run(
+        ["hypothesis", "write", "foo"],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+        cwd=tmp_path,
+    )
+    actual = proc.stdout.replace(re.search(r"from '(.+)foo/", proc.stdout).group(1), "")
+
+    expected = get_recorded("nothing_found", actual * update_recorded_outputs)
+    assert actual == expected  # We got the expected source code
+    exec(expected, {})  # and there are no SyntaxError or NameErrors

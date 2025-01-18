@@ -10,10 +10,11 @@
 
 import collections
 import enum
+import sys
 
 import pytest
 
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 from hypothesis.errors import (
     FailedHealthCheck,
     InvalidArgument,
@@ -28,38 +29,48 @@ from hypothesis.strategies._internal.strategies import (
     filter_not_satisfied,
 )
 
+from tests.common.debug import (
+    assert_all_examples,
+    assert_simple_property,
+    check_can_generate_examples,
+)
 from tests.common.utils import fails_with
 
 an_enum = enum.Enum("A", "a b c")
+a_flag = enum.Flag("A", "a b c")
+# named zero state is required for empty flags from around py3.11/3.12
+an_empty_flag = enum.Flag("EmptyFlag", {"a": 0})
 
 an_ordereddict = collections.OrderedDict([("a", 1), ("b", 2), ("c", 3)])
 
 
 @fails_with(InvalidArgument)
 def test_cannot_sample_sets():
-    sampled_from(set("abc")).example()
+    check_can_generate_examples(sampled_from(set("abc")))
 
 
 def test_can_sample_sequence_without_warning():
-    sampled_from([1, 2, 3]).example()
+    check_can_generate_examples(sampled_from([1, 2, 3]))
 
 
 def test_can_sample_ordereddict_without_warning():
-    sampled_from(an_ordereddict).example()
+    check_can_generate_examples(sampled_from(an_ordereddict))
 
 
-@given(sampled_from(an_enum))
-def test_can_sample_enums(member):
-    assert isinstance(member, an_enum)
+@pytest.mark.parametrize("enum_class", [an_enum, a_flag, an_empty_flag])
+def test_can_sample_enums(enum_class):
+    assert_all_examples(sampled_from(enum_class), lambda x: isinstance(x, enum_class))
 
 
 @fails_with(FailedHealthCheck)
+@settings(suppress_health_check=[])
 @given(sampled_from(range(10)).filter(lambda x: x < 0))
 def test_unsat_filtered_sampling(x):
     raise AssertionError
 
 
 @fails_with(Unsatisfiable)
+@settings(suppress_health_check=[])
 @given(sampled_from(range(2)).filter(lambda x: x < 0))
 def test_unsat_filtered_sampling_in_rejection_stage(x):
     # Rejecting all possible indices before we calculate the allowed indices
@@ -68,8 +79,9 @@ def test_unsat_filtered_sampling_in_rejection_stage(x):
 
 
 def test_easy_filtered_sampling():
-    x = sampled_from(range(100)).filter(lambda x: x == 0).example()
-    assert x == 0
+    assert_simple_property(
+        sampled_from(range(100)).filter(lambda x: x == 0), lambda x: x == 0
+    )
 
 
 @given(sampled_from(range(100)).filter(lambda x: x == 99))
@@ -145,7 +157,7 @@ def test_unsatisfiable_explicit_filteredstrategy_just(x):
 
 
 def test_transformed_just_strategy():
-    data = ConjectureData.for_buffer(bytes(100))
+    data = ConjectureData.for_choices([])
     s = JustStrategy([1]).map(lambda x: x * 2)
     assert s.do_draw(data) == 2
     sf = s.filter(lambda x: False)
@@ -187,6 +199,119 @@ class AnnotationsInsteadOfElements(enum.Enum):
     a: "int"
 
 
+@pytest.mark.skipif(sys.version_info[:2] >= (3, 14), reason="FIXME-py314")
 def test_suggests_elements_instead_of_annotations():
     with pytest.raises(InvalidArgument, match="Cannot sample.*annotations.*dataclass"):
-        st.sampled_from(AnnotationsInsteadOfElements).example()
+        check_can_generate_examples(st.sampled_from(AnnotationsInsteadOfElements))
+
+
+class TestErrorNoteBehavior3819:
+    elements = (st.booleans(), st.decimals(), st.integers(), st.text())
+
+    @staticmethod
+    @given(st.data())
+    def direct_without_error(data):
+        data.draw(st.sampled_from((st.floats(), st.binary())))
+
+    @staticmethod
+    @given(st.data())
+    def direct_with_non_type_error(data):
+        data.draw(st.sampled_from(st.characters(), st.floats()))
+        raise Exception("Contains SearchStrategy, but no note addition!")
+
+    @staticmethod
+    @given(st.data())
+    def direct_with_type_error_without_substring(data):
+        data.draw(st.sampled_from(st.booleans(), st.binary()))
+        raise TypeError("Substring not in message!")
+
+    @staticmethod
+    @given(st.data())
+    def direct_with_type_error_with_substring_but_not_all_strategies(data):
+        data.draw(st.sampled_from(st.booleans(), False, True))
+        raise TypeError("Contains SearchStrategy, but no note addition!")
+
+    @staticmethod
+    @given(st.data())
+    def direct_all_strategies_with_type_error_with_substring(data):
+        data.draw(st.sampled_from((st.dates(), st.datetimes())))
+        raise TypeError("This message contains SearchStrategy as substring!")
+
+    @staticmethod
+    @given(st.lists(st.sampled_from(elements)))
+    def indirect_without_error(_):
+        return
+
+    @staticmethod
+    @given(st.lists(st.sampled_from(elements)))
+    def indirect_with_non_type_error(_):
+        raise Exception("Contains SearchStrategy, but no note addition!")
+
+    @staticmethod
+    @given(st.lists(st.sampled_from(elements)))
+    def indirect_with_type_error_without_substring(_):
+        raise TypeError("Substring not in message!")
+
+    @staticmethod
+    @given(st.lists(st.sampled_from((*elements, False, True))))
+    def indirect_with_type_error_with_substring_but_not_all_strategies(_):
+        raise TypeError("Contains SearchStrategy, but no note addition!")
+
+    @staticmethod
+    @given(st.lists(st.sampled_from(elements), min_size=1))
+    def indirect_all_strategies_with_type_error_with_substring(objs):
+        raise TypeError("Contains SearchStrategy in message, trigger note!")
+
+    @pytest.mark.parametrize(
+        ["func_to_call", "exp_err_cls", "should_exp_msg"],
+        [
+            pytest.param(f.__func__, err, msg_exp, id=f.__func__.__name__)
+            for f, err, msg_exp in [
+                (f, TypeError, True)
+                for f in (
+                    direct_all_strategies_with_type_error_with_substring,
+                    indirect_all_strategies_with_type_error_with_substring,
+                )
+            ]
+            + [
+                (f, TypeError, False)
+                for f in (
+                    direct_with_type_error_without_substring,
+                    direct_with_type_error_with_substring_but_not_all_strategies,
+                    indirect_with_type_error_without_substring,
+                    indirect_with_type_error_with_substring_but_not_all_strategies,
+                )
+            ]
+            + [
+                (f, Exception, False)
+                for f in (
+                    direct_with_non_type_error,
+                    indirect_with_non_type_error,
+                )
+            ]
+            + [
+                (f, None, False)
+                for f in (
+                    direct_without_error,
+                    indirect_without_error,
+                )
+            ]
+        ],
+    )
+    def test_error_appropriate_error_note_3819(
+        self, func_to_call, exp_err_cls, should_exp_msg
+    ):
+        if exp_err_cls is None:
+            # Here we only care that no exception was raised, so nothing to assert.
+            func_to_call()
+        else:
+            with pytest.raises(exp_err_cls) as err_ctx:
+                func_to_call()
+            notes = getattr(err_ctx.value, "__notes__", [])
+            matching_messages = [
+                n
+                for n in notes
+                if n.startswith("sample_from was given a collection of strategies")
+                and n.endswith("Was one_of intended?")
+            ]
+            assert len(matching_messages) == (1 if should_exp_msg else 0)

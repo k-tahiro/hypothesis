@@ -47,15 +47,24 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
+import io
 import re
+import struct
+import sys
 import warnings
 from collections import Counter, OrderedDict, defaultdict, deque
+from dataclasses import dataclass, field
 from enum import Enum, Flag
+from functools import partial
 
+import attrs
 import pytest
 
+from hypothesis import given, strategies as st
+from hypothesis.control import current_build_context
 from hypothesis.internal.compat import PYPY
-from hypothesis.strategies._internal.numbers import SIGNALING_NAN
+from hypothesis.internal.conjecture.floats import float_to_lex
+from hypothesis.internal.floats import SIGNALING_NAN
 from hypothesis.vendor import pretty
 
 
@@ -92,8 +101,11 @@ class Dummy1:
         p.text("Dummy1(...)")
 
 
-class Dummy2(Dummy1):
+class Dummy2:
     _repr_pretty_ = None
+
+    def __repr__(self):
+        return "Dummy2()"
 
 
 class NoModule:
@@ -199,7 +211,7 @@ def test_callability_checking():
     """Test that the _repr_pretty_ method is tested for callability and skipped
     if not."""
     gotoutput = pretty.pretty(Dummy2())
-    expectedoutput = "Dummy1(...)"
+    expectedoutput = "Dummy2()"
 
     assert gotoutput == expectedoutput
 
@@ -600,13 +612,15 @@ def test_breakable_at_group_boundary():
     [
         (float("nan"), "nan"),
         (-float("nan"), "-nan"),
-        (SIGNALING_NAN, "nan  # Saw 1 signaling NaN"),
-        (-SIGNALING_NAN, "-nan  # Saw 1 signaling NaN"),
-        ((SIGNALING_NAN, SIGNALING_NAN), "(nan, nan)  # Saw 2 signaling NaNs"),
+        (SIGNALING_NAN, "struct.unpack('d', struct.pack('Q', 0x7ff8000000000001))[0]"),
+        (-SIGNALING_NAN, "struct.unpack('d', struct.pack('Q', 0xfff8000000000001))[0]"),
     ],
 )
 def test_nan_reprs(obj, rep):
     assert pretty.pretty(obj) == rep
+    assert float_to_lex(obj) == float_to_lex(
+        eval(rep, {"struct": struct, "nan": float("nan")})
+    )
 
 
 def _repr_call(*args, **kwargs):
@@ -667,3 +681,253 @@ class LyingReprOptions(Flag):
 )
 def test_pretty_prints_enums_as_code(rep):
     assert pretty.pretty(eval(rep)) == rep
+
+
+class Obj:
+    def _repr_pretty_(self, p, cycle):
+        """Exercise the IPython callback interface."""
+        assert not cycle
+        with p.indent(2):
+            p.text("abc,")
+            p.breakable(" ")
+            p.break_()
+        p.begin_group(8, "<")
+        p.end_group(8, ">")
+
+
+def test_supports_ipython_callback():
+    assert pretty.pretty(Obj()) == "abc, \n  <>"
+
+
+def test_pretty_partial_with_cycle():
+    ls = []
+    p = partial(bool, ls)
+    assert pretty.pretty(p) == "functools.partial(bool, [])"
+    ls.append(p)
+    assert pretty.pretty(p) == "functools.partial(bool, [functools.partial(bool, ...)])"
+
+
+class InvalidSyntaxRepr:
+    def __init__(self, val=None) -> None:
+        self.val = val
+
+    def __repr__(self):
+        return "invalid syntax"
+
+
+class ValidSyntaxRepr:
+    def __init__(self, val=None) -> None:
+        self.val = val
+
+    def __repr__(self):
+        return "ValidSyntaxRepr(...)"
+
+
+@given(st.data())
+def test_pprint_with_call_or_repr_as_call(data):
+    # mapped pprint repr only triggers for failing examples - which makes an
+    # end to end test given hypothesis difficult. fake our way around it.
+    current_build_context().is_final = True
+
+    x = data.draw(st.none().map(InvalidSyntaxRepr))
+    p = pretty.RepresentationPrinter(context=current_build_context())
+    p.pretty(x)
+    assert p.getvalue() == "InvalidSyntaxRepr(None)"
+
+
+@given(st.just(InvalidSyntaxRepr()).map(ValidSyntaxRepr))
+def test_pprint_with_call_or_repr_as_repr(x):
+    p = pretty.RepresentationPrinter(context=current_build_context())
+    p.pretty(x)
+    assert p.getvalue() == "ValidSyntaxRepr(...)"
+
+
+@given(st.data())
+def test_pprint_map_with_cycle(data):
+    current_build_context().is_final = True
+    x = data.draw(st.just(ValidSyntaxRepr()).map(lambda x: x))
+
+    p = pretty.RepresentationPrinter(context=current_build_context())
+    p.pretty(x)
+    assert p.getvalue() == "ValidSyntaxRepr(...)"
+
+
+def test_pprint_large_integers():
+    p = pretty.RepresentationPrinter()
+    p.pretty(1234567890)
+    assert p.getvalue() == "1_234_567_890"
+
+
+def test_pprint_extremely_large_integers():
+    x = 10**5000  # repr fails with ddos error
+    p = pretty.RepresentationPrinter()
+    p.pretty(x)
+    got = p.getvalue()
+    assert got == f"{x:#_x}"  # hexadecimal with underscores
+    assert eval(got) == x
+
+
+class ReprDetector:
+    def _repr_pretty_(self, p, cycle):
+        """Exercise the IPython callback interface."""
+        p.text("GOOD")
+
+    def __repr__(self):
+        return "BAD"
+
+
+@dataclass
+class SomeDataClass:
+    x: object
+
+
+def test_pretty_prints_data_classes():
+    assert pretty.pretty(SomeDataClass(ReprDetector())) == "SomeDataClass(x=GOOD)"
+
+
+@attrs.define
+class SomeAttrsClass:
+    x: ReprDetector
+
+
+@pytest.mark.skipif(sys.version_info[:2] >= (3, 14), reason="FIXME-py314")
+def test_pretty_prints_attrs_classes():
+    assert pretty.pretty(SomeAttrsClass(ReprDetector())) == "SomeAttrsClass(x=GOOD)"
+
+
+@attrs.define
+class SomeAttrsClassWithCustomPretty:
+    def _repr_pretty_(self, p, cycle):
+        """Exercise the IPython callback interface."""
+        p.text("I am a banana")
+
+
+def test_custom_pretty_print_method_overrides_field_printing():
+    assert pretty.pretty(SomeAttrsClassWithCustomPretty()) == "I am a banana"
+
+
+@attrs.define
+class SomeAttrsClassWithLotsOfFields:
+    a: int
+    b: int
+    c: int
+    d: int
+    e: int
+    f: int
+    g: int
+    h: int
+    i: int
+    j: int
+    k: int
+    l: int
+    m: int
+    n: int
+    o: int
+    p: int
+    q: int
+    r: int
+    s: int
+
+
+@pytest.mark.skipif(sys.version_info[:2] >= (3, 14), reason="FIXME-py314")
+def test_will_line_break_between_fields():
+    obj = SomeAttrsClassWithLotsOfFields(
+        **{
+            at.name: 12345678900000000000000001
+            for at in SomeAttrsClassWithLotsOfFields.__attrs_attrs__
+        }
+    )
+    assert "\n" in pretty.pretty(obj)
+
+
+@attrs.define
+class SomeDataClassWithNoFields: ...
+
+
+def test_prints_empty_dataclass_correctly():
+    assert pretty.pretty(SomeDataClassWithNoFields()) == "SomeDataClassWithNoFields()"
+
+
+def test_handles_cycles_in_dataclass():
+    x = SomeDataClass(x=1)
+    x.x = x
+
+    assert pretty.pretty(x) == "SomeDataClass(x=SomeDataClass(...))"
+
+
+@dataclass
+class DataClassWithNoInitField:
+    x: int
+    y: int = field(init=False)
+
+
+def test_does_not_include_no_init_fields_in_dataclass_printing():
+    record = DataClassWithNoInitField(x=1)
+    assert pretty.pretty(record) == "DataClassWithNoInitField(x=1)"
+    record.y = 1
+    assert pretty.pretty(record) == "DataClassWithNoInitField(x=1)"
+
+
+@attrs.define
+class AttrsClassWithNoInitField:
+    x: int
+    y: int = attrs.field(init=False)
+
+
+@pytest.mark.skipif(sys.version_info[:2] >= (3, 14), reason="FIXME-py314")
+def test_does_not_include_no_init_fields_in_attrs_printing():
+    record = AttrsClassWithNoInitField(x=1)
+    assert pretty.pretty(record) == "AttrsClassWithNoInitField(x=1)"
+    record.y = 1
+    assert pretty.pretty(record) == "AttrsClassWithNoInitField(x=1)"
+
+
+class Namespace:
+    @dataclass
+    class DC:
+        x: int
+
+    @attrs.define
+    class A:
+        x: int
+
+    class E(Enum):
+        A = 1
+
+
+NAMESPACED_VALUES = [
+    Namespace.DC(x=1),
+    Namespace.A(x=1),
+    Namespace.E.A,
+]
+
+
+@pytest.mark.parametrize("obj", NAMESPACED_VALUES, ids=map(repr, NAMESPACED_VALUES))
+def test_includes_namespace_classes_in_pretty(obj):
+    assert pretty.pretty(obj).startswith("Namespace.")
+
+
+class Banana:
+    def _repr_pretty_(self, p, cycle):
+        p.text("I am a banana")
+
+
+@dataclass
+class InheritsPretty(Banana):
+    x: int
+    y: int
+
+
+def test_uses_defined_pretty_printing_method():
+    assert pretty.pretty(InheritsPretty(x=1, y=2)) == pretty.pretty(Banana())
+
+
+def test_prefers_singleton_printing_to_repr_pretty():
+    out = io.StringIO()
+    printer = pretty.RepresentationPrinter(out)
+    banana = Banana()
+    printer.singleton_pprinters[id(banana)] = lambda obj, p, cycle: p.text(
+        "Actually a fish"
+    )
+    printer.pretty(banana)
+    assert "Actually a fish" in out.getvalue()

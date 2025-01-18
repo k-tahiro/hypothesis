@@ -11,9 +11,9 @@
 import os
 from warnings import filterwarnings
 
-from hypothesis import Phase, Verbosity, settings
-from hypothesis._settings import not_set
-from hypothesis.errors import NonInteractiveExampleWarning
+from hypothesis import HealthCheck, Phase, Verbosity, settings
+from hypothesis._settings import CI, is_in_ci, not_set
+from hypothesis.internal.conjecture.data import AVAILABLE_PROVIDERS
 from hypothesis.internal.coverage import IN_COVERAGE_TESTS
 
 
@@ -36,9 +36,6 @@ def run():
         category=UserWarning,
     )
 
-    # User-facing warning which does not apply to our own tests
-    filterwarnings("ignore", category=NonInteractiveExampleWarning)
-
     # We do a smoke test here before we mess around with settings.
     x = settings()
 
@@ -48,13 +45,14 @@ def run():
         v = getattr(x, s.name)
         # Check if it has a dynamically defined default and if so skip comparison.
         if getattr(settings, s.name).show_default:
-            assert (
-                v == s.default
+            assert v == s.default or (
+                is_in_ci() and v == getattr(CI, s.name)
             ), f"({v!r} == x.{s.name}) != (s.{s.name} == {s.default!r})"
 
     settings.register_profile(
         "default",
         settings(
+            settings.get_profile("default"),
             max_examples=20 if IN_COVERAGE_TESTS else not_set,
             phases=list(Phase),  # Dogfooding the explain phase
         ),
@@ -63,5 +61,18 @@ def run():
     settings.register_profile("speedy", settings(max_examples=5))
 
     settings.register_profile("debug", settings(verbosity=Verbosity.debug))
+
+    if "crosshair" in AVAILABLE_PROVIDERS:
+        settings.register_profile(
+            "crosshair",
+            backend="crosshair",
+            max_examples=20,
+            deadline=None,
+            suppress_health_check=(HealthCheck.too_slow, HealthCheck.filter_too_much),
+            report_multiple_bugs=False,
+        )
+
+    for backend in set(AVAILABLE_PROVIDERS) - {"hypothesis", "crosshair"}:
+        settings.register_profile(backend, backend=backend)
 
     settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))

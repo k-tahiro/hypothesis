@@ -28,7 +28,7 @@ from hypothesis.strategies import (
     tuples,
 )
 
-from tests.common.debug import find_any, minimal
+from tests.common.debug import assert_simple_property, find_any, minimal
 from tests.common.utils import flaky
 
 
@@ -50,7 +50,7 @@ from tests.common.utils import flaky
     ],
 )
 def test_find_empty_collection_gives_empty(col, strat):
-    assert minimal(strat, lambda x: True) == col
+    assert minimal(strat) == col
 
 
 @pytest.mark.parametrize(
@@ -64,7 +64,7 @@ def test_find_non_empty_collection_gives_single_zero(coltype, strat):
     ("coltype", "strat"), [(list, lists), (set, sets), (frozenset, frozensets)]
 )
 def test_minimizes_to_empty(coltype, strat):
-    assert minimal(strat(integers()), lambda x: True) == coltype()
+    assert minimal(strat(integers())) == coltype()
 
 
 def test_minimizes_list_of_lists():
@@ -83,8 +83,10 @@ def test_ordered_dictionaries_preserve_keys():
     r = Random()
     keys = list(range(100))
     r.shuffle(keys)
-    x = fixed_dictionaries(OrderedDict([(k, booleans()) for k in keys])).example()
-    assert list(x.keys()) == keys
+    assert_simple_property(
+        fixed_dictionaries(OrderedDict([(k, booleans()) for k in keys])),
+        lambda x: list(x.keys()) == keys,
+    )
 
 
 @given(fixed_dictionaries({}, optional={0: booleans(), 1: nothing(), 2: booleans()}))
@@ -94,15 +96,15 @@ def test_fixed_dictionaries_with_optional_and_empty_keys(d):
 
 @pytest.mark.parametrize("n", range(10))
 def test_lists_of_fixed_length(n):
-    assert minimal(lists(integers(), min_size=n, max_size=n), lambda x: True) == [0] * n
+    assert minimal(lists(integers(), min_size=n, max_size=n)) == [0] * n
 
 
 @pytest.mark.parametrize("n", range(10))
 def test_sets_of_fixed_length(n):
-    x = minimal(sets(integers(), min_size=n, max_size=n), lambda x: True)
+    x = minimal(sets(integers(), min_size=n, max_size=n))
     assert len(x) == n
 
-    if not n:
+    if n == 0:
         assert x == set()
     else:
         assert x == set(range(min(x), min(x) + n))
@@ -110,11 +112,7 @@ def test_sets_of_fixed_length(n):
 
 @pytest.mark.parametrize("n", range(10))
 def test_dictionaries_of_fixed_length(n):
-    x = set(
-        minimal(
-            dictionaries(integers(), booleans(), min_size=n, max_size=n), lambda x: True
-        ).keys()
-    )
+    x = set(minimal(dictionaries(integers(), booleans(), min_size=n, max_size=n)))
 
     if not n:
         assert x == set()
@@ -124,11 +122,8 @@ def test_dictionaries_of_fixed_length(n):
 
 @pytest.mark.parametrize("n", range(10))
 def test_lists_of_lower_bounded_length(n):
-    x = minimal(lists(integers(), min_size=n), lambda x: sum(x) >= 2 * n)
-    assert n <= len(x) <= 2 * n
-    assert all(t >= 0 for t in x)
-    assert len(x) == n or all(t > 0 for t in x)
-    assert sum(x) == 2 * n
+    l = minimal(lists(integers(), min_size=n), lambda x: sum(x) >= 2 * n)
+    assert l == [] if n == 0 else [0] * (n - 1) + [n * 2]
 
 
 @flaky(min_passes=1, max_runs=3)
@@ -166,9 +161,8 @@ def test_small_sized_sets(x):
 
 
 def test_minimize_dicts_with_incompatible_keys():
-    assert minimal(
-        fixed_dictionaries({1: booleans(), "hi": lists(booleans())}), lambda x: True
-    ) == {1: False, "hi": []}
+    strat = fixed_dictionaries({1: booleans(), "hi": lists(booleans())})
+    assert minimal(strat) == {1: False, "hi": []}
 
 
 @given(

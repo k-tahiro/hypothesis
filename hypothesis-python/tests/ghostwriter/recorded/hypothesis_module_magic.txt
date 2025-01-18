@@ -1,12 +1,13 @@
 # This test code was written by the `hypothesis.extra.ghostwriter` module
 # and is provided under the Creative Commons Zero public domain dedication.
 
+import collections.abc
 import datetime
 import hypothesis
 import random
 import typing
+from collections.abc import Hashable
 from hypothesis import given, settings, strategies as st
-from typing import Hashable
 
 
 @given(condition=st.from_type(object))
@@ -14,9 +15,9 @@ def test_fuzz_assume(condition: object) -> None:
     hypothesis.assume(condition=condition)
 
 
-@given(value=st.text())
-def test_fuzz_event(value: str) -> None:
-    hypothesis.event(value=value)
+@given(value=st.text(), payload=st.one_of(st.floats(), st.integers(), st.text()))
+def test_fuzz_event(value: str, payload: typing.Union[str, int, float]) -> None:
+    hypothesis.event(value=value, payload=payload)
 
 
 @given(
@@ -42,8 +43,8 @@ def test_fuzz_find(
     )
 
 
-@given(value=st.text())
-def test_fuzz_note(value: str) -> None:
+@given(value=st.from_type(object))
+def test_fuzz_note(value: object) -> None:
     hypothesis.note(value=value)
 
 
@@ -57,8 +58,8 @@ def test_fuzz_reproduce_failure(version: str, blob: bytes) -> None:
     hypothesis.reproduce_failure(version=version, blob=blob)
 
 
-@given(seed=st.from_type(typing.Hashable))
-def test_fuzz_seed(seed: typing.Hashable) -> None:
+@given(seed=st.from_type(Hashable))
+def test_fuzz_seed(seed: collections.abc.Hashable) -> None:
     hypothesis.seed(seed=seed)
 
 
@@ -74,6 +75,7 @@ def test_fuzz_seed(seed: typing.Hashable) -> None:
     suppress_health_check=st.just(not_set),
     deadline=st.just(not_set),
     print_blob=st.just(not_set),
+    backend=st.just(not_set),
 )
 def test_fuzz_settings(
     parent: typing.Optional[hypothesis.settings],
@@ -87,6 +89,7 @@ def test_fuzz_settings(
     suppress_health_check,
     deadline: typing.Union[int, float, datetime.timedelta, None],
     print_blob: bool,
+    backend: str,
 ) -> None:
     hypothesis.settings(
         parent=parent,
@@ -100,6 +103,7 @@ def test_fuzz_settings(
         suppress_health_check=suppress_health_check,
         deadline=deadline,
         print_blob=print_blob,
+        backend=backend,
     )
 
 

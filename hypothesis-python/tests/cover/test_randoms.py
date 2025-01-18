@@ -15,7 +15,7 @@ from copy import copy
 
 import pytest
 
-from hypothesis import assume, given, strategies as st
+from hypothesis import HealthCheck, assume, given, settings, strategies as st
 from hypothesis.internal.compat import ExceptionGroup
 from hypothesis.strategies._internal.random import (
     RANDOM_METHODS,
@@ -124,7 +124,7 @@ def any_call_of_method(draw, method):
 @st.composite
 def any_call(draw):
     method = draw(st.sampled_from(RANDOM_METHODS))
-    return (method,) + draw(any_call_of_method(method))
+    return (method, *draw(any_call_of_method(method)))
 
 
 @pytest.mark.parametrize("method", RANDOM_METHODS)
@@ -294,6 +294,7 @@ def test_invalid_sample():
 
 
 def test_triangular_modes():
+    @settings(report_multiple_bugs=True)
     @given(st.randoms(use_true_random=False))
     def test(rnd):
         x = rnd.triangular(0.0, 1.0, mode=0.5)
@@ -323,10 +324,6 @@ def test_choices_have_right_length(rnd, choices):
     assert len(rnd.choices(seq, k=k)) == k
 
 
-@pytest.mark.skipif(
-    "randbytes" not in RANDOM_METHODS,
-    reason="randbytes not supported on this Python version",
-)
 @given(any_random, st.integers(0, 100))
 def test_randbytes_have_right_length(rnd, n):
     assert len(rnd.randbytes(n)) == n
@@ -341,6 +338,7 @@ def test_can_manage_very_long_ranges_with_step(rnd):
     assert i in range(0, 2**256, 3)
 
 
+@settings(suppress_health_check=[HealthCheck.too_slow])
 @given(any_random, st.data())
 def test_range_with_arbitrary_step_is_in_range(rnd, data):
     endpoints = st.integers(-100, 100)
@@ -381,3 +379,8 @@ def test_can_sample_from_large_subset(rnd):
     ys = rnd.sample(xs, n)
     assert set(ys).issubset(set(xs))
     assert len(ys) == len(set(ys)) == n
+
+
+@given(st.randoms(use_true_random=False))
+def test_can_draw_empty_from_empty_sequence(rnd):
+    assert rnd.sample([], 0) == []

@@ -9,11 +9,11 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import re
-from typing import NamedTuple, Optional, Tuple, Union
+from typing import NamedTuple, Optional, Union
 
 from hypothesis import assume, strategies as st
 from hypothesis.errors import InvalidArgument
-from hypothesis.internal.conjecture import utils as cu
+from hypothesis.internal.conjecture.utils import _calc_p_continue
 from hypothesis.internal.coverage import check_function
 from hypothesis.internal.validation import check_type, check_valid_interval
 from hypothesis.strategies._internal.utils import defines_strategy
@@ -21,28 +21,28 @@ from hypothesis.utils.conventions import UniqueIdentifier, not_set
 
 __all__ = [
     "NDIM_MAX",
-    "Shape",
-    "BroadcastableShapes",
     "BasicIndex",
-    "check_argument",
-    "order_check",
-    "check_valid_dims",
-    "array_shapes",
-    "valid_tuple_axes",
-    "broadcastable_shapes",
-    "mutually_broadcastable_shapes",
-    "MutuallyBroadcastableShapesStrategy",
     "BasicIndexStrategy",
+    "BroadcastableShapes",
+    "MutuallyBroadcastableShapesStrategy",
+    "Shape",
+    "array_shapes",
+    "broadcastable_shapes",
+    "check_argument",
+    "check_valid_dims",
+    "mutually_broadcastable_shapes",
+    "order_check",
+    "valid_tuple_axes",
 ]
 
 
-Shape = Tuple[int, ...]
+Shape = tuple[int, ...]
 # We silence flake8 here because it disagrees with mypy about `ellipsis` (`type(...)`)
-BasicIndex = Tuple[Union[int, slice, None, "ellipsis"], ...]  # noqa: F821
+BasicIndex = tuple[Union[int, slice, None, "ellipsis"], ...]  # noqa: F821
 
 
 class BroadcastableShapes(NamedTuple):
-    input_shapes: Tuple[Shape, ...]
+    input_shapes: tuple[Shape, ...]
     result_shape: Shape
 
 
@@ -121,7 +121,7 @@ def valid_tuple_axes(
     *,
     min_size: int = 0,
     max_size: Optional[int] = None,
-) -> st.SearchStrategy[Tuple[int, ...]]:
+) -> st.SearchStrategy[tuple[int, ...]]:
     """All tuples will have a length >= ``min_size`` and <= ``max_size``. The default
     value for ``max_size`` is ``ndim``.
 
@@ -282,11 +282,11 @@ _SIGNATURE_MULTIPLE_OUTPUT = rf"^{_ARGUMENT_LIST}->{_ARGUMENT_LIST}$"
 
 
 class _GUfuncSig(NamedTuple):
-    input_shapes: Tuple[Shape, ...]
+    input_shapes: tuple[Shape, ...]
     result_shape: Shape
 
 
-def _hypothesis_parse_gufunc_signature(signature, *, all_checks=True):
+def _hypothesis_parse_gufunc_signature(signature):
     # Disable all_checks to better match the Numpy version, for testing
     if not re.match(_SIGNATURE, signature):
         if re.match(_SIGNATURE_MULTIPLE_OUTPUT, signature):
@@ -315,34 +315,29 @@ def _hypothesis_parse_gufunc_signature(signature, *, all_checks=True):
     )
     assert len(output_shapes) == 1
     result_shape = output_shapes[0]
-    if all_checks:
-        # Check that there are no names in output shape that do not appear in inputs.
-        # (kept out of parser function for easier generation of test values)
-        # We also disallow frozen optional dimensions - this is ambiguous as there is
-        # no way to share an un-named dimension between shapes.  Maybe just padding?
-        # Anyway, we disallow it pending clarification from upstream.
-        frozen_optional_err = (
-            "Got dimension %r, but handling of frozen optional dimensions "
-            "is ambiguous.  If you known how this should work, please "
-            "contact us to get this fixed and documented (signature=%r)."
-        )
-        only_out_err = (
-            "The %r dimension only appears in the output shape, and is "
-            "not frozen, so the size is not determined (signature=%r)."
-        )
-        names_in = {n.strip("?") for shp in input_shapes for n in shp}
-        names_out = {n.strip("?") for n in result_shape}
-        for shape in input_shapes + (result_shape,):
-            for name in shape:
-                try:
-                    int(name.strip("?"))
-                    if "?" in name:
-                        raise InvalidArgument(frozen_optional_err % (name, signature))
-                except ValueError:
-                    if name.strip("?") in (names_out - names_in):
-                        raise InvalidArgument(
-                            only_out_err % (name, signature)
-                        ) from None
+    # Check that there are no names in output shape that do not appear in inputs.
+    # (kept out of parser function for easier generation of test values)
+    # We also disallow frozen optional dimensions - this is ambiguous as there is
+    # no way to share an un-named dimension between shapes.  Maybe just padding?
+    # Anyway, we disallow it pending clarification from upstream.
+    for shape in (*input_shapes, result_shape):
+        for name in shape:
+            try:
+                int(name.strip("?"))
+                if "?" in name:
+                    raise InvalidArgument(
+                        f"Got dimension {name!r}, but handling of frozen optional dimensions "
+                        "is ambiguous.  If you known how this should work, please "
+                        "contact us to get this fixed and documented ({signature=})."
+                    )
+            except ValueError:
+                names_in = {n.strip("?") for shp in input_shapes for n in shp}
+                names_out = {n.strip("?") for n in result_shape}
+                if name.strip("?") in (names_out - names_in):
+                    raise InvalidArgument(
+                        "The {name!r} dimension only appears in the output shape, and is "
+                        "not frozen, so the size is not determined ({signature=})."
+                    ) from None
     return _GUfuncSig(input_shapes=input_shapes, result_shape=result_shape)
 
 
@@ -408,7 +403,7 @@ def mutually_broadcastable_shapes(
             )
         check_type(str, signature, "signature")
         parsed_signature = _hypothesis_parse_gufunc_signature(signature)
-        all_shapes = parsed_signature.input_shapes + (parsed_signature.result_shape,)
+        all_shapes = (*parsed_signature.input_shapes, parsed_signature.result_shape)
         sig_dims = min(len(s) for s in all_shapes)
         num_shapes = len(parsed_signature.input_shapes)
 
@@ -540,7 +535,7 @@ class MutuallyBroadcastableShapesStrategy(st.SearchStrategy):
         # that we can do an accurate per-shape length cap.
         dims = {}
         shapes = []
-        for shape in self.signature.input_shapes + (self.signature.result_shape,):
+        for shape in (*self.signature.input_shapes, self.signature.result_shape):
             shapes.append([])
             for name in shape:
                 if name.isdigit():
@@ -549,7 +544,7 @@ class MutuallyBroadcastableShapesStrategy(st.SearchStrategy):
                 if name not in dims:
                     dim = name.strip("?")
                     dims[dim] = data.draw(self.side_strat)
-                    if self.min_dims == 0 and not data.draw_bits(3):
+                    if self.min_dims == 0 and not data.draw_boolean(7 / 8):
                         dims[dim + "?"] = None
                     else:
                         dims[dim + "?"] = dims[dim]
@@ -566,6 +561,9 @@ class MutuallyBroadcastableShapesStrategy(st.SearchStrategy):
         else:
             assert len(use) == self.num_shapes
             assert all(isinstance(x, bool) for x in use)
+
+        _gap = self.max_dims - self.min_dims
+        p_keep_extending_shape = _calc_p_continue(desired_avg=_gap / 2, max_size=_gap)
 
         for dim_count in range(1, self.max_dims + 1):
             dim = dim_count - 1
@@ -601,9 +599,7 @@ class MutuallyBroadcastableShapesStrategy(st.SearchStrategy):
                 # shape-tuple even if it is no longer being added to.
                 # This helps to ensure more stable shrinking behavior.
                 if self.min_dims < dim_count:
-                    use[shape_id] &= cu.biased_coin(
-                        data, 1 - 1 / (1 + self.max_dims - dim)
-                    )
+                    use[shape_id] &= data.draw_boolean(p_keep_extending_shape)
 
                 if use[shape_id]:
                     shape.append(side)
@@ -614,7 +610,7 @@ class MutuallyBroadcastableShapesStrategy(st.SearchStrategy):
             if not any(use):
                 break
 
-        result_shape = result_shape[: max(map(len, [self.base_shape] + shapes))]
+        result_shape = result_shape[: max(map(len, [self.base_shape, *shapes]))]
 
         assert len(shapes) == self.num_shapes
         assert all(self.min_dims <= len(s) <= self.max_dims for s in shapes)

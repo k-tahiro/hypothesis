@@ -14,20 +14,26 @@ to really unreasonable lengths to produce pretty output."""
 import ast
 import hashlib
 import inspect
+import linecache
 import os
 import re
 import sys
 import textwrap
 import types
-from functools import wraps
+import warnings
+from collections.abc import MutableMapping
+from functools import partial, wraps
 from io import StringIO
 from keyword import iskeyword
+from random import _inst as global_random_instance
 from tokenize import COMMENT, detect_encoding, generate_tokens, untokenize
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
 from unittest.mock import _patch as PatchType
+from weakref import WeakKeyDictionary
 
-from hypothesis.internal.compat import PYPY, is_typed_named_tuple
+from hypothesis.errors import HypothesisWarning
+from hypothesis.internal.compat import is_typed_named_tuple
 from hypothesis.utils.conventions import not_set
 from hypothesis.vendor.pretty import pretty
 
@@ -35,6 +41,7 @@ if TYPE_CHECKING:
     from hypothesis.strategies._internal.strategies import T
 
 READTHEDOCS = os.environ.get("READTHEDOCS", None) == "True"
+LAMBDA_SOURCE_CACHE: MutableMapping[Callable, str] = WeakKeyDictionary()
 
 
 def is_mock(obj):
@@ -61,14 +68,7 @@ def _clean_source(src: str) -> bytes:
     # lines - i.e. any decorators, so that adding `@example()`s keeps the same key.
     try:
         funcdef = ast.parse(src).body[0]
-        if sys.version_info[:2] == (3, 8) and PYPY:
-            # We can't get a line number of the (async) def here, so as a best-effort
-            # approximation we'll use str.split instead and hope for the best.
-            tag = "async def " if isinstance(funcdef, ast.AsyncFunctionDef) else "def "
-            if tag in src:
-                src = tag + src.split(tag, maxsplit=1)[1]
-        else:
-            src = "".join(src.splitlines(keepends=True)[funcdef.lineno - 1 :])
+        src = "".join(src.splitlines(keepends=True)[funcdef.lineno - 1 :])
     except Exception:
         pass
     # Remove blank lines and use the tokenize module to strip out comments,
@@ -88,13 +88,17 @@ def function_digest(function):
     multiple processes and is prone to changing significantly in response to
     minor changes to the function.
 
-    No guarantee of uniqueness though it usually will be.
+    No guarantee of uniqueness though it usually will be. Digest collisions
+    lead to unfortunate but not fatal problems during database replay.
     """
     hasher = hashlib.sha384()
     try:
         src = inspect.getsource(function)
     except (OSError, TypeError):
         # If we can't actually get the source code, try for the name as a fallback.
+        # NOTE: We might want to change this to always adding function.__qualname__,
+        # to differentiate f.x. two classes having the same function implementation
+        # with class-dependent behaviour.
         try:
             hasher.update(function.__name__.encode())
         except AttributeError:
@@ -156,16 +160,6 @@ def get_signature(
                     parameters=[v for k, v in sig.parameters.items() if k != "self"]
                 )
         return sig
-    if sys.version_info[:2] <= (3, 8) and inspect.isclass(target):
-        # Workaround for subclasses of typing.Generic on Python <= 3.8
-        from hypothesis.strategies._internal.types import is_generic_type
-
-        if is_generic_type(target):
-            sig = inspect.signature(target.__init__)
-            check_signature(sig)
-            return sig.replace(
-                parameters=[v for k, v in sig.parameters.items() if k != "self"]
-            )
     # eval_str is only supported by Python 3.10 and newer
     if sys.version_info[:2] >= (3, 10):
         sig = inspect.signature(
@@ -247,7 +241,7 @@ def ast_arguments_matches_signature(args, sig):
     assert isinstance(args, ast.arguments)
     assert isinstance(sig, inspect.Signature)
     expected = []
-    for node in getattr(args, "posonlyargs", ()):  # New in Python 3.8
+    for node in args.posonlyargs:
         expected.append((node.arg, inspect.Parameter.POSITIONAL_ONLY))
     for node in args.args:
         expected.append((node.arg, inspect.Parameter.POSITIONAL_OR_KEYWORD))
@@ -266,7 +260,7 @@ def is_first_param_referenced_in_function(f):
         tree = ast.parse(textwrap.dedent(inspect.getsource(f)))
     except Exception:
         return True  # Assume it's OK unless we know otherwise
-    name = list(get_signature(f).parameters)[0]
+    name = next(iter(get_signature(f).parameters))
     return any(
         isinstance(node, ast.Name)
         and node.id == name
@@ -295,15 +289,23 @@ SPACE_FOLLOWS_OPEN_BRACKET = re.compile(r"\( ")
 SPACE_PRECEDES_CLOSE_BRACKET = re.compile(r" \)")
 
 
-def extract_lambda_source(f):
+def _extract_lambda_source(f):
     """Extracts a single lambda expression from the string source. Returns a
     string indicating an unknown body if it gets confused in any way.
 
     This is not a good function and I am sorry for it. Forgive me my
     sins, oh lord
     """
+    # You might be wondering how a lambda can have a return-type annotation?
+    # The answer is that we add this at runtime, in new_given_signature(),
+    # and we do support strange choices as applying @given() to a lambda.
     sig = inspect.signature(f)
-    assert sig.return_annotation is inspect.Parameter.empty
+    assert sig.return_annotation in (inspect.Parameter.empty, None), sig
+
+    # Using pytest-xdist on Python 3.13, there's an entry in the linecache for
+    # file "<string>", which then returns nonsense to getsource.  Discard it.
+    linecache.cache.pop("<string>", None)
+
     if sig.parameters:
         if_confused = f"lambda {str(sig)[1:-1]}: <unknown>"
     else:
@@ -318,7 +320,7 @@ def extract_lambda_source(f):
     source = source.strip()
     if "lambda" not in source and sys.platform == "emscripten":  # pragma: no cover
         return if_confused  # work around Pyodide bug in inspect.getsource()
-    assert "lambda" in source
+    assert "lambda" in source, source
 
     tree = None
 
@@ -423,10 +425,23 @@ def extract_lambda_source(f):
     return source.strip()
 
 
-def get_pretty_function_description(f):
+def extract_lambda_source(f):
+    try:
+        return LAMBDA_SOURCE_CACHE[f]
+    except KeyError:
+        pass
+
+    source = _extract_lambda_source(f)
+    LAMBDA_SOURCE_CACHE[f] = source
+    return source
+
+
+def get_pretty_function_description(f: object) -> str:
+    if isinstance(f, partial):
+        return pretty(f)
     if not hasattr(f, "__name__"):
         return repr(f)
-    name = f.__name__
+    name = f.__name__  # type: ignore # validated by hasattr above
     if name == "<lambda>":
         return extract_lambda_source(f)
     elif isinstance(f, (types.MethodType, types.BuiltinMethodType)):
@@ -434,6 +449,8 @@ def get_pretty_function_description(f):
         # Some objects, like `builtins.abs` are of BuiltinMethodType but have
         # their module as __self__.  This might include c-extensions generally?
         if not (self is None or inspect.isclass(self) or inspect.ismodule(self)):
+            if self is global_random_instance:
+                return f"random.{name}"
             return f"{self!r}.{name}"
     elif isinstance(name, str) and getattr(dict, name, object()) is f:
         # special case for keys/values views in from_type() / ghostwriter output
@@ -451,7 +468,7 @@ def nicerepr(v):
         return re.sub(r"(\[)~([A-Z][a-z]*\])", r"\g<1>\g<2>", pretty(v))
 
 
-def repr_call(f, args, kwargs, reorder=True):
+def repr_call(f, args, kwargs, *, reorder=True):
     # Note: for multi-line pretty-printing, see RepresentationPrinter.repr_call()
     if reorder:
         args, kwargs = convert_positional_arguments(f, args, kwargs)
@@ -468,6 +485,15 @@ def repr_call(f, args, kwargs, reorder=True):
     rep = nicerepr(f)
     if rep.startswith("lambda") and ":" in rep:
         rep = f"({rep})"
+    repr_len = len(rep) + sum(len(b) for b in bits)  # approx
+    if repr_len > 30000:
+        warnings.warn(
+            "Generating overly large repr. This is an expensive operation, and with "
+            f"a length of {repr_len//1000} kB is unlikely to be useful. Use -Wignore "
+            "to ignore the warning, or -Werror to get a traceback.",
+            HypothesisWarning,
+            stacklevel=2,
+        )
     return rep + "(" + ", ".join(bits) + ")"
 
 
@@ -519,7 +545,7 @@ def define_function_signature(name, docstring, signature):
     for a in signature.parameters:
         check_valid_identifier(a)
 
-    used_names = list(signature.parameters) + [name]
+    used_names = {*signature.parameters, name}
 
     newsig = signature.replace(
         parameters=[

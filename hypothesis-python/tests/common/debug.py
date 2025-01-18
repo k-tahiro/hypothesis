@@ -8,41 +8,36 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hypothesis import (
-    HealthCheck,
-    Phase,
-    Verbosity,
-    given,
-    settings as Settings,
-    strategies as st,
-)
+from unittest import SkipTest
+
+from hypothesis import HealthCheck, Phase, Verbosity, given, settings as Settings
+from hypothesis._settings import local_settings
+from hypothesis.control import _current_build_context
 from hypothesis.errors import Found, NoSuchExample, Unsatisfiable
-from hypothesis.internal.conjecture.data import ConjectureData, StopTest
 from hypothesis.internal.reflection import get_pretty_function_description
 
 from tests.common.utils import no_shrink
 
-TIME_INCREMENT = 0.01
+TIME_INCREMENT = 0.00001
 
 
-class Timeout(BaseException):
-    pass
+def minimal(definition, condition=lambda x: True, settings=None):
+    from tests.conftest import in_shrinking_benchmark
 
+    definition.validate()
+    result = None
 
-def minimal(definition, condition=lambda x: True, settings=None, timeout_after=10):
     def wrapped_condition(x):
-        if timeout_after is not None:
-            if runtime:
-                runtime[0] += TIME_INCREMENT
-                if runtime[0] >= timeout_after:
-                    raise Timeout
-        result = condition(x)
-        if result and not runtime:
-            runtime.append(0.0)
-        return result
+        # This sure seems pointless, but `test_sum_of_pair` fails otherwise...
+        return condition(x)
+
+    if (
+        context := _current_build_context.value
+    ) and context.data.provider.avoid_realization:
+        raise SkipTest("`minimal()` helper not supported under symbolic execution")
 
     if settings is None:
-        settings = Settings(max_examples=50000, phases=(Phase.generate, Phase.shrink))
+        settings = Settings(max_examples=500, phases=(Phase.generate, Phase.shrink))
 
     verbosity = settings.verbosity
     if verbosity == Verbosity.normal:
@@ -53,22 +48,22 @@ def minimal(definition, condition=lambda x: True, settings=None, timeout_after=1
         parent=settings,
         suppress_health_check=list(HealthCheck),
         report_multiple_bugs=False,
-        derandomize=True,
+        # we derandomize in general to avoid flaky tests, but we do want to
+        # measure this variation while benchmarking.
+        derandomize=not in_shrinking_benchmark,
         database=None,
         verbosity=verbosity,
     )
     def inner(x):
         if wrapped_condition(x):
-            result[:] = [x]
+            nonlocal result
+            result = x
             raise Found
 
-    definition.validate()
-    runtime = []
-    result = []
     try:
         inner()
     except Found:
-        return result[0]
+        return result
     raise Unsatisfiable(
         "Could not find any examples from %r that satisfied %s"
         % (definition, get_pretty_function_description(condition))
@@ -76,6 +71,13 @@ def minimal(definition, condition=lambda x: True, settings=None, timeout_after=1
 
 
 def find_any(definition, condition=lambda _: True, settings=None):
+    # If nested within an existing @given
+    if context := _current_build_context.value:
+        while True:
+            if condition(s := context.data.draw(definition)):
+                return s
+
+    # If top-level
     settings = settings or Settings.default
     return minimal(
         definition,
@@ -88,34 +90,66 @@ def find_any(definition, condition=lambda _: True, settings=None):
 
 def assert_no_examples(strategy, condition=lambda _: True):
     try:
-        result = find_any(strategy, condition)
-        raise AssertionError(f"Expected no results but found {result!r}")
+        assert_all_examples(strategy, lambda val: not condition(val))
     except (Unsatisfiable, NoSuchExample):
         pass
 
 
-def assert_all_examples(strategy, predicate):
+def assert_all_examples(strategy, predicate, settings=None):
     """Asserts that all examples of the given strategy match the predicate.
 
     :param strategy: Hypothesis strategy to check
     :param predicate: (callable) Predicate that takes example and returns bool
     """
+    if context := _current_build_context.value:
+        with local_settings(Settings(parent=settings)):
+            for _ in range(20):
+                s = context.data.draw(strategy)
+                msg = f"Found {s!r} using strategy {strategy} which does not match"
+                assert predicate(s), msg
 
-    @given(strategy)
-    def assert_examples(s):
-        msg = f"Found {s!r} using strategy {strategy} which does not match"
-        assert predicate(s), msg
+    else:
 
-    assert_examples()
+        @given(strategy)
+        @Settings(parent=settings, database=None)
+        def assert_examples(s):
+            msg = f"Found {s!r} using strategy {strategy} which does not match"
+            assert predicate(s), msg
+
+        assert_examples()
 
 
-def assert_can_trigger_event(strategy, predicate):
-    def test(buf):
-        data = ConjectureData.for_buffer(buf)
-        try:
-            data.draw(strategy)
-        except StopTest:
-            pass
-        return any(predicate(e) for e in data.events)
+def assert_simple_property(strategy, predicate, settings=None):
+    """Like assert_all_examples, intended as a self-documenting shortcut for simple constant
+    properties (`is`, `isinstance`, `==`, ...) that can be adequately verified in just a few
+    examples.
 
-    find_any(st.binary(), test)
+    For more thorough checking, use assert_all_examples.
+    """
+
+    assert_all_examples(
+        strategy,
+        predicate,
+        Settings(
+            parent=settings,
+            max_examples=15,
+            suppress_health_check=list(HealthCheck),
+        ),
+    )
+
+
+def check_can_generate_examples(strategy, settings=None):
+    """Tries to generate a small number of examples from the strategy, to verify that it can
+    do so without raising.
+
+    Nothing is returned, it only checks that no error is raised.
+    """
+
+    assert_simple_property(
+        strategy,
+        lambda _: True,
+        settings=Settings(
+            parent=settings,
+            phases=(Phase.generate,),
+        ),
+    )

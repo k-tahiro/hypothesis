@@ -15,7 +15,7 @@ from functools import reduce
 import pytest
 
 import hypothesis.strategies as st
-from hypothesis import assume, settings
+from hypothesis import assume, given, settings
 from hypothesis.strategies import (
     booleans,
     builds,
@@ -107,6 +107,10 @@ def test_minimize_sets_of_sets():
             assert any(s != t and t.issubset(s) for t in set_of_sets)
 
 
+def test_minimize_sets_sampled_from():
+    assert minimal(st.sets(st.sampled_from(range(10)), min_size=3)) == {0, 1, 2}
+
+
 def test_can_simplify_flatmap_with_bounded_left_hand_size():
     assert (
         minimal(booleans().flatmap(lambda x: lists(just(x))), lambda x: len(x) >= 10)
@@ -181,7 +185,7 @@ def test_minimize_multiple_elements_in_silly_large_int_range():
     desired_result = [0] * 20
 
     ir = integers(-(2**256), 2**256)
-    x = minimal(lists(ir), lambda x: len(x) >= 20, timeout_after=20)
+    x = minimal(lists(ir), lambda x: len(x) >= 20, settings(max_examples=10_000))
     assert x == desired_result
 
 
@@ -192,7 +196,6 @@ def test_minimize_multiple_elements_in_silly_large_int_range_min_is_not_dupe():
     x = minimal(
         lists(ir),
         lambda x: (assume(len(x) >= 20) and all(x[i] >= target[i] for i in target)),
-        timeout_after=60,
     )
     assert x == target
 
@@ -207,7 +210,6 @@ def test_find_large_union_list():
     result = minimal(
         lists(sets(integers(), min_size=1), min_size=1),
         large_mostly_non_overlapping,
-        timeout_after=120,
     )
     assert len(result) == 1
     union = reduce(set.union, result)
@@ -223,7 +225,6 @@ def test_containment(n, seed):
     iv = minimal(
         tuples(lists(integers()), integers()),
         lambda x: x[1] in x[0] and x[1] >= n,
-        timeout_after=60,
     )
     assert iv == ([n], n)
 
@@ -232,7 +233,6 @@ def test_duplicate_containment():
     ls, i = minimal(
         tuples(lists(integers()), integers()),
         lambda s: s[0].count(s[1]) > 1,
-        timeout_after=100,
     )
     assert ls == [0, 0]
     assert i == 0
@@ -343,10 +343,52 @@ def test_lists_forced_near_top(n):
     ) == [0] * (n + 2)
 
 
-def test_sum_of_pair():
+def test_sum_of_pair_int():
     assert minimal(
         tuples(integers(0, 1000), integers(0, 1000)), lambda x: sum(x) > 1000
     ) == (1, 1000)
+
+
+def test_sum_of_pair_float():
+    assert minimal(
+        tuples(st.floats(0, 1000), st.floats(0, 1000)), lambda x: sum(x) > 1000
+    ) == (1.0, 1000.0)
+
+
+def test_sum_of_pair_mixed():
+    # check both orderings
+    assert minimal(
+        tuples(st.floats(0, 1000), st.integers(0, 1000)), lambda x: sum(x) > 1000
+    ) == (1.0, 1000)
+    assert minimal(
+        tuples(st.integers(0, 1000), st.floats(0, 1000)), lambda x: sum(x) > 1000
+    ) == (1, 1000.0)
+
+
+def test_sum_of_pair_separated_int():
+    @st.composite
+    def separated_sum(draw):
+        n1 = draw(st.integers(0, 1000))
+        draw(st.text())
+        draw(st.booleans())
+        draw(st.integers())
+        n2 = draw(st.integers(0, 1000))
+        return (n1, n2)
+
+    assert minimal(separated_sum(), lambda x: sum(x) > 1000) == (1, 1000)
+
+
+def test_sum_of_pair_separated_float():
+    @st.composite
+    def separated_sum(draw):
+        f1 = draw(st.floats(0, 1000))
+        draw(st.text())
+        draw(st.booleans())
+        draw(st.integers())
+        f2 = draw(st.floats(0, 1000))
+        return (f1, f2)
+
+    assert minimal(separated_sum(), lambda x: sum(x) > 1000) == (1, 1000)
 
 
 def test_calculator_benchmark():
@@ -392,3 +434,42 @@ def test_calculator_benchmark():
     x = minimal(expression, is_failing)
 
     assert x == ("/", 0, ("+", 0, 0))
+
+
+def test_one_of_slip():
+    assert minimal(st.integers(101, 200) | st.integers(0, 100)) == 101
+
+
+# this limit is only to avoid Unsatisfiable when searching for an initial
+# counterexample in minimal, as we may generate a very large magnitude n.
+@given(st.integers(-(2**32), 2**32))
+@settings(max_examples=3)
+def test_perfectly_shrinks_integers(n):
+    if n >= 0:
+        assert minimal(st.integers(), lambda x: x >= n) == n
+    else:
+        assert minimal(st.integers(), lambda x: x <= n) == n
+
+
+@given(st.integers(0, 20))
+def test_lowering_together_positive(gap):
+    s = st.tuples(st.integers(0, 20), st.integers(0, 20))
+    assert minimal(s, lambda x: x[0] + gap == x[1]) == (0, gap)
+
+
+@given(st.integers(-20, 0))
+def test_lowering_together_negative(gap):
+    s = st.tuples(st.integers(-20, 0), st.integers(-20, 0))
+    assert minimal(s, lambda x: x[0] + gap == x[1]) == (0, gap)
+
+
+@given(st.integers(-10, 10))
+def test_lowering_together_mixed(gap):
+    s = st.tuples(st.integers(-10, 10), st.integers(-10, 10))
+    assert minimal(s, lambda x: x[0] + gap == x[1]) == (0, gap)
+
+
+@given(st.integers(-10, 10))
+def test_lowering_together_with_gap(gap):
+    s = st.tuples(st.integers(-10, 10), st.text(), st.floats(), st.integers(-10, 10))
+    assert minimal(s, lambda x: x[0] + gap == x[3]) == (0, "", 0.0, gap)

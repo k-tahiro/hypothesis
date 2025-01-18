@@ -30,7 +30,7 @@ def test_does_not_use_explicit_examples(i):
     assert isinstance(i, bool)
 
 
-@settings(phases=(Phase.reuse, Phase.shrink))
+@settings(phases=(Phase.reuse, Phase.shrink), database=InMemoryExampleDatabase())
 @given(st.booleans())
 def test_this_would_fail_if_you_ran_it(b):
     raise AssertionError
@@ -47,8 +47,8 @@ def test_sorts_and_dedupes_phases(arg, expected):
     assert settings(phases=arg).phases == expected
 
 
-def test_phases_default_to_all_except_explain():
-    assert all_settings["phases"].default + (Phase.explain,) == tuple(Phase)
+def test_phases_default_to_all():
+    assert all_settings["phases"].default == tuple(Phase)
 
 
 def test_does_not_reuse_saved_examples_if_reuse_not_in_phases():

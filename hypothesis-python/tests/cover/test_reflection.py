@@ -20,6 +20,7 @@ import pytest
 from pytest import raises
 
 from hypothesis import given, strategies as st
+from hypothesis.errors import HypothesisWarning
 from hypothesis.internal import reflection
 from hypothesis.internal.reflection import (
     convert_keyword_arguments,
@@ -35,6 +36,7 @@ from hypothesis.internal.reflection import (
     required_args,
     source_exec_as_module,
 )
+from hypothesis.strategies._internal.lazy import LazyStrategy
 
 
 def do_conversion_test(f, args, kwargs):
@@ -539,12 +541,10 @@ def test_required_args(target, args, kwargs, expected):
     assert required_args(target, args, kwargs) == expected
 
 
-# fmt: off
-pi = "π"; is_str_pi = lambda x: x == pi  # noqa: E702,E731
-# fmt: on
-
-
 def test_can_handle_unicode_identifier_in_same_line_as_lambda_def():
+    # fmt: off
+    pi = "π"; is_str_pi = lambda x: x == pi  # noqa: E702
+    # fmt: on
     assert get_pretty_function_description(is_str_pi) == "lambda x: x == pi"
 
 
@@ -565,6 +565,9 @@ def test_does_not_crash_on_utf8_lambda_without_encoding(monkeypatch):
     # has to fall back to assuming it's ASCII.
 
     monkeypatch.setattr(reflection, "detect_encoding", None)
+    # fmt: off
+    pi = "π"; is_str_pi = lambda x: x == pi  # noqa: E702
+    # fmt: on
     assert get_pretty_function_description(is_str_pi) == "lambda x: <unknown>"
 
 
@@ -710,3 +713,8 @@ def _prep_source(*pairs):
 )
 def test_clean_source(src, clean):
     assert reflection._clean_source(src).splitlines() == clean.splitlines()
+
+
+def test_overlong_repr_warns():
+    with pytest.warns(HypothesisWarning, match="overly large"):
+        repr(LazyStrategy(st.one_of, [st.none()] * 10000, {}))

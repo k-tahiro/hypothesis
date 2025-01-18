@@ -12,7 +12,17 @@ import functools
 import threading
 from collections import namedtuple
 
-from hypothesis import HealthCheck, Verbosity, assume, given, note, reporting, settings
+from hypothesis import (
+    HealthCheck,
+    Verbosity,
+    assume,
+    given,
+    note,
+    reporting,
+    settings,
+    strategies as st,
+)
+from hypothesis.errors import Unsatisfiable
 from hypothesis.strategies import (
     binary,
     booleans,
@@ -36,6 +46,7 @@ from tests.common.utils import (
     fails_with,
     no_shrink,
     raises,
+    skipif_emscripten,
 )
 
 # This particular test file is run under both pytest and nose, so it can't
@@ -114,7 +125,7 @@ class TestCases:
         assert isinstance(self, TestCases)
 
     @given(x=integers())
-    def test_abs_non_negative_varargs_kwargs_only(*args, **kw):  # noqa: B902
+    def test_abs_non_negative_varargs_kwargs_only(*args, **kw):
         assert abs(kw["x"]) >= 0
         assert isinstance(args[0], TestCases)
 
@@ -158,12 +169,13 @@ def test_integers_from_are_from(x):
 
 
 def test_does_not_catch_interrupt_during_falsify():
-    calls = [0]
+    called = False
 
     @given(integers())
     def flaky_base_exception(x):
-        if not calls[0]:
-            calls[0] = 1
+        nonlocal called
+        if not called:
+            called = True
             raise KeyboardInterrupt
 
     with raises(KeyboardInterrupt):
@@ -331,6 +343,7 @@ def test_can_run_without_database():
         test_blah()
 
 
+@skipif_emscripten
 def test_can_run_with_database_in_thread():
     results = []
 
@@ -481,3 +494,41 @@ def test_given_usable_inline_on_lambdas():
     given(booleans())(lambda x: xs.append(x))()
     assert len(xs) == 2
     assert set(xs) == {False, True}
+
+
+def test_notes_high_filter_rates_in_unsatisfiable_error():
+    @given(st.integers())
+    @settings(suppress_health_check=[HealthCheck.filter_too_much])
+    def f(v):
+        assume(False)
+
+    with raises(
+        Unsatisfiable,
+        match=(
+            r"Unable to satisfy assumptions of f\. 1000 of 1000 examples "
+            r"failed a \.filter\(\) or assume\(\)"
+        ),
+    ):
+        f()
+
+
+def test_notes_high_overrun_rates_in_unsatisfiable_error():
+    @given(st.binary(min_size=9000))
+    @settings(
+        suppress_health_check=[
+            HealthCheck.data_too_large,
+            HealthCheck.too_slow,
+            HealthCheck.large_base_example,
+        ]
+    )
+    def f(v):
+        pass
+
+    with raises(
+        Unsatisfiable,
+        match=(
+            r"1000 of 1000 examples were too large to finish generating; "
+            r"try reducing the typical size of your inputs\?"
+        ),
+    ):
+        f()

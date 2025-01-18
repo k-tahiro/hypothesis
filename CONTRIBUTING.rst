@@ -10,7 +10,8 @@ Just tell me how to make a pull request
 
 1. Make your change and ensure it has adequate tests
 2. Create ``hypothesis-python/RELEASE.rst`` with ``RELEASE_TYPE: patch``
-   for small bugfixes, or ``minor`` for new features.  See recent PRs for examples.
+   for small bugfixes, or ``minor`` for new features.  See ``RELEASE-sample.rst``
+   as an example.
 3. Add yourself to the list in ``AUTHORS.rst`` and open a PR!
 
 For more detail, read on; for even more, continue to the ``guides/`` directory!
@@ -61,12 +62,12 @@ make changes and install the changed version) you can do this with:
   pytest hypothesis-python/tests/cover/
 
 You may wish to do all of this in a
-`virtualenv <https://virtualenv.pypa.io/en/latest/>`_. For example:
+`virtualenv <https://docs.python.org/3/library/venv.html>`_. For example:
 
 .. code:: bash
 
-  virtualenv venv
-  source venv/bin/activate
+  python3 -m venv .venv
+  source .venv/bin/activate
   pip install hypothesis
 
 Will create an isolated environment where you can install and try out
@@ -207,11 +208,11 @@ high level, the task takes the form:
 Namely, first provide the tox environment (see ``tox.ini``), then the python
 version to test with, then any ``tox`` or ``pytest`` args as needed. For
 example, to run all of the tests in the file
-``tests/nocover/test_conjecture_engine.py`` with python 3.8:
+``tests/nocover/test_conjecture_engine.py`` with python 3.12:
 
 .. code-block::
 
-    ./build.sh tox py38-custom 3.8.13 -- tests/nocover/test_conjecture_engine.py
+    ./build.sh tox py312-custom 3.12.7 -- tests/nocover/test_conjecture_engine.py
 
 See the ``tox`` docs and ``pytest`` docs for more information:
 * https://docs.pytest.org/en/latest/how-to/usage.html

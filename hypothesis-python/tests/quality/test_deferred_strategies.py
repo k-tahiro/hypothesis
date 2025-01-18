@@ -26,13 +26,10 @@ def test_non_trivial_json():
     objects = st.dictionaries(st.text(), json)
 
     assert minimal(json) is None
-
-    small_list = minimal(json, lambda x: isinstance(x, list) and x)
-    assert small_list == [None]
-
-    x = minimal(json, lambda x: isinstance(x, dict) and isinstance(x.get(""), list))
-
-    assert x == {"": []}
+    assert minimal(json, lambda x: isinstance(x, list) and x) == [None]
+    assert minimal(
+        json, lambda x: isinstance(x, dict) and isinstance(x.get(""), list)
+    ) == {"": []}
 
 
 def test_self_recursive_lists():

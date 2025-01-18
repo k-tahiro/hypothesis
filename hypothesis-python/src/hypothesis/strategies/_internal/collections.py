@@ -9,19 +9,22 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import copy
-from typing import Any, Iterable, Tuple, overload
+from collections.abc import Iterable
+from typing import Any, overload
 
 from hypothesis.errors import InvalidArgument
 from hypothesis.internal.conjecture import utils as cu
+from hypothesis.internal.conjecture.engine import BUFFER_SIZE
 from hypothesis.internal.conjecture.junkdrawer import LazySequenceCopy
 from hypothesis.internal.conjecture.utils import combine_labels
+from hypothesis.internal.filtering import get_integer_predicate_bounds
 from hypothesis.internal.reflection import is_identity_function
 from hypothesis.strategies._internal.strategies import (
     T3,
     T4,
     T5,
     Ex,
-    MappedSearchStrategy,
+    MappedStrategy,
     SearchStrategy,
     T,
     check_strategy,
@@ -62,60 +65,60 @@ class TupleStrategy(SearchStrategy):
 
 
 @overload
-def tuples() -> SearchStrategy[Tuple[()]]:  # pragma: no cover
+def tuples() -> SearchStrategy[tuple[()]]:  # pragma: no cover
     ...
 
 
-@overload  # noqa: F811
-def tuples(__a1: SearchStrategy[Ex]) -> SearchStrategy[Tuple[Ex]]:  # pragma: no cover
+@overload
+def tuples(__a1: SearchStrategy[Ex]) -> SearchStrategy[tuple[Ex]]:  # pragma: no cover
     ...
 
 
-@overload  # noqa: F811
+@overload
 def tuples(
     __a1: SearchStrategy[Ex], __a2: SearchStrategy[T]
-) -> SearchStrategy[Tuple[Ex, T]]:  # pragma: no cover
+) -> SearchStrategy[tuple[Ex, T]]:  # pragma: no cover
     ...
 
 
-@overload  # noqa: F811
+@overload
 def tuples(
     __a1: SearchStrategy[Ex], __a2: SearchStrategy[T], __a3: SearchStrategy[T3]
-) -> SearchStrategy[Tuple[Ex, T, T3]]:  # pragma: no cover
+) -> SearchStrategy[tuple[Ex, T, T3]]:  # pragma: no cover
     ...
 
 
-@overload  # noqa: F811
+@overload
 def tuples(
     __a1: SearchStrategy[Ex],
     __a2: SearchStrategy[T],
     __a3: SearchStrategy[T3],
     __a4: SearchStrategy[T4],
-) -> SearchStrategy[Tuple[Ex, T, T3, T4]]:  # pragma: no cover
+) -> SearchStrategy[tuple[Ex, T, T3, T4]]:  # pragma: no cover
     ...
 
 
-@overload  # noqa: F811
+@overload
 def tuples(
     __a1: SearchStrategy[Ex],
     __a2: SearchStrategy[T],
     __a3: SearchStrategy[T3],
     __a4: SearchStrategy[T4],
     __a5: SearchStrategy[T5],
-) -> SearchStrategy[Tuple[Ex, T, T3, T4, T5]]:  # pragma: no cover
+) -> SearchStrategy[tuple[Ex, T, T3, T4, T5]]:  # pragma: no cover
     ...
 
 
-@overload  # noqa: F811
+@overload
 def tuples(
     *args: SearchStrategy[Any],
-) -> SearchStrategy[Tuple[Any, ...]]:  # pragma: no cover
+) -> SearchStrategy[tuple[Any, ...]]:  # pragma: no cover
     ...
 
 
 @cacheable
 @defines_strategy()
-def tuples(*args: SearchStrategy[Any]) -> SearchStrategy[Tuple[Any, ...]]:  # noqa: F811
+def tuples(*args: SearchStrategy[Any]) -> SearchStrategy[tuple[Any, ...]]:
     """Return a strategy which generates a tuple of the same length as args by
     generating the value at index i from args[i].
 
@@ -146,6 +149,13 @@ class ListStrategy(SearchStrategy):
             0.5 * (self.min_size + self.max_size),
         )
         self.element_strategy = elements
+        if min_size > BUFFER_SIZE:
+            raise InvalidArgument(
+                f"{self!r} can never generate an example, because min_size is larger "
+                "than Hypothesis supports.  Including it is at best slowing down your "
+                "tests for no benefit; at worst making them fail (maybe flakily) with "
+                "a HealthCheck error."
+            )
 
     def calc_label(self):
         return combine_labels(self.class_label, self.element_strategy.label)
@@ -187,8 +197,9 @@ class ListStrategy(SearchStrategy):
         return result
 
     def __repr__(self):
-        return "{}({!r}, min_size={!r}, max_size={!r})".format(
-            self.__class__.__name__, self.element_strategy, self.min_size, self.max_size
+        return (
+            f"{self.__class__.__name__}({self.element_strategy!r}, "
+            f"min_size={self.min_size:_}, max_size={self.max_size:_})"
         )
 
     def filter(self, condition):
@@ -199,7 +210,25 @@ class ListStrategy(SearchStrategy):
             new = copy.copy(self)
             new.min_size = 1
             return new
-        return super().filter(condition)
+
+        kwargs, pred = get_integer_predicate_bounds(condition)
+        if kwargs.get("len") and ("min_value" in kwargs or "max_value" in kwargs):
+            new = copy.copy(self)
+            new.min_size = max(self.min_size, kwargs.get("min_value", self.min_size))
+            new.max_size = min(self.max_size, kwargs.get("max_value", self.max_size))
+            # Unsatisfiable filters are easiest to understand without rewriting.
+            if new.min_size > new.max_size:
+                return SearchStrategy.filter(self, condition)
+            # Recompute average size; this is cheaper than making it into a property.
+            new.average_size = min(
+                max(new.min_size * 2, new.min_size + 5),
+                0.5 * (new.min_size + new.max_size),
+            )
+            if pred is None:
+                return new
+            return SearchStrategy.filter(new, condition)
+
+        return SearchStrategy.filter(self, condition)
 
 
 class UniqueListStrategy(ListStrategy):
@@ -239,7 +268,7 @@ class UniqueListStrategy(ListStrategy):
                 for key, seen in zip(self.keys, seen_sets):
                     seen.add(key(value))
                 if self.tuple_suffixes is not None:
-                    value = (value,) + data.draw(self.tuple_suffixes)
+                    value = (value, *data.draw(self.tuple_suffixes))
                 result.append(value)
         assert self.max_size >= len(result) >= self.min_size
         return result
@@ -259,19 +288,15 @@ class UniqueSampledListStrategy(UniqueListStrategy):
         remaining = LazySequenceCopy(self.element_strategy.elements)
 
         while remaining and should_draw.more():
-            i = len(remaining) - 1
-            j = cu.integer_range(data, 0, i)
-            if j != i:
-                remaining[i], remaining[j] = remaining[j], remaining[i]
-            value = self.element_strategy._transform(remaining.pop())
-
+            j = data.draw_integer(0, len(remaining) - 1)
+            value = self.element_strategy._transform(remaining.pop(j))
             if value is not filter_not_satisfied and all(
                 key(value) not in seen for key, seen in zip(self.keys, seen_sets)
             ):
                 for key, seen in zip(self.keys, seen_sets):
                     seen.add(key(value))
                 if self.tuple_suffixes is not None:
-                    value = (value,) + data.draw(self.tuple_suffixes)
+                    value = (value, *data.draw(self.tuple_suffixes))
                 result.append(value)
             else:
                 should_draw.reject(
@@ -281,7 +306,7 @@ class UniqueSampledListStrategy(UniqueListStrategy):
         return result
 
 
-class FixedKeysDictStrategy(MappedSearchStrategy):
+class FixedKeysDictStrategy(MappedStrategy):
     """A strategy which produces dicts with a fixed set of keys, given a
     strategy for each of their equivalent values.
 
@@ -290,18 +315,18 @@ class FixedKeysDictStrategy(MappedSearchStrategy):
     """
 
     def __init__(self, strategy_dict):
-        self.dict_type = type(strategy_dict)
+        dict_type = type(strategy_dict)
         self.keys = tuple(strategy_dict.keys())
-        super().__init__(strategy=TupleStrategy(strategy_dict[k] for k in self.keys))
+        super().__init__(
+            strategy=TupleStrategy(strategy_dict[k] for k in self.keys),
+            pack=lambda value: dict_type(zip(self.keys, value)),
+        )
 
     def calc_is_empty(self, recur):
         return recur(self.mapped_strategy)
 
     def __repr__(self):
         return f"FixedKeysDictStrategy({self.keys!r}, {self.mapped_strategy!r})"
-
-    def pack(self, value):
-        return self.dict_type(zip(self.keys, value))
 
 
 class FixedAndOptionalKeysDictStrategy(SearchStrategy):
@@ -330,7 +355,7 @@ class FixedAndOptionalKeysDictStrategy(SearchStrategy):
             data, min_size=0, max_size=len(remaining), average_size=len(remaining) / 2
         )
         while should_draw.more():
-            j = cu.integer_range(data, 0, len(remaining) - 1)
+            j = data.draw_integer(0, len(remaining) - 1)
             remaining[-1], remaining[j] = remaining[j], remaining[-1]
             key = remaining.pop()
             result[key] = data.draw(self.optional[key])

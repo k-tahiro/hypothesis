@@ -18,17 +18,19 @@ from hypothesis import HealthCheck, given, reject, settings, strategies as st
 from hypothesis.errors import Unsatisfiable
 from hypothesis.extra import numpy as npst, pandas as pdst
 
+from tests.common.debug import check_can_generate_examples
 from tests.pandas.helpers import supported_by_pandas
 
 
 # https://pandas.pydata.org/docs/whatsnew/v2.0.0.html#index-can-now-hold-numpy-numeric-dtypes
 @given(pdst.indexes(dtype=int, max_size=0))
 def test_gets_right_dtype_for_empty_indices(ix):
-    is_32bit = sys.maxsize == 2**32 - 1
+    is_32bit = sys.maxsize == 2**31 - 1
     pandas2 = pandas.__version__.startswith("2.")
+    numpy1 = np.__version__.startswith("1.")
     windows = sys.platform == "win32"  # including 64-bit windows, confusingly
-    if pandas2 and (is_32bit or windows):
-        # No, I don't know what this is int32 on 64-bit windows, but here we are.
+    if pandas2 and (is_32bit or (windows and numpy1)):
+        # No, I don't know what this is int32 on 64-bit windows until Numpy 2.0
         assert ix.dtype == np.dtype("int32")
     else:
         assert ix.dtype == np.dtype("int64")
@@ -41,7 +43,7 @@ def test_gets_right_dtype_for_empty_indices_with_elements(ix):
 
 def test_does_not_generate_impossible_conditions():
     with pytest.raises(Unsatisfiable):
-        pdst.indexes(min_size=3, max_size=3, dtype=bool).example()
+        check_can_generate_examples(pdst.indexes(min_size=3, max_size=3, dtype=bool))
 
 
 @given(pdst.indexes(dtype=bool, unique=True))

@@ -14,13 +14,13 @@ from pathlib import Path
 
 import setuptools
 
-if sys.version_info[:2] < (3, 8):
+if sys.version_info[:2] < (3, 9):  # "unreachable" sanity check
     raise Exception(
         "You are trying to install Hypothesis using Python "
-        f"{sys.version.split()[0]}, but it requires Python 3.8 or later."
+        f"{sys.version.split()[0]}, but it requires Python 3.9 or later."
         "Update `pip` and `setuptools`, try again, and you will automatically "
         "get the latest compatible version of Hypothesis instead.  "
-        "See also https://python3statement.org/practicalities/"
+        "See also https://python3statement.github.io/practicalities/"
     )
 
 
@@ -55,22 +55,21 @@ extras = {
     "pytz": ["pytz>=2014.1"],
     "dateutil": ["python-dateutil>=1.4"],
     "lark": ["lark>=0.10.1"],  # probably still works with old `lark-parser` too
-    "numpy": ["numpy>=1.17.3"],  # oldest with wheels for non-EOL Python (for now)
+    "numpy": ["numpy>=1.19.3"],  # oldest with wheels for non-EOL Python (for now)
     "pandas": ["pandas>=1.1"],
     "pytest": ["pytest>=4.6"],
     "dpcontracts": ["dpcontracts>=0.4"],
     "redis": ["redis>=3.0.0"],
-    # zoneinfo is an odd one: every dependency is conditional, because they're
-    # only necessary on old versions of Python or Windows systems.
+    "crosshair": ["hypothesis-crosshair>=0.0.18", "crosshair-tool>=0.0.81"],
+    # zoneinfo is an odd one: every dependency is platform-conditional.
     "zoneinfo": [
-        "tzdata>=2023.3 ; sys_platform == 'win32'",
-        "backports.zoneinfo>=0.2.1 ; python_version<'3.9'",
+        "tzdata>=2024.2 ; sys_platform == 'win32' or sys_platform == 'emscripten'",
     ],
     # We only support Django versions with upstream support - see
     # https://www.djangoproject.com/download/#supported-versions
     # We also leave the choice of timezone library to the user, since it
     # might be zoneinfo or pytz depending on version and configuration.
-    "django": ["django>=3.2"],
+    "django": ["django>=4.2"],
 }
 
 extras["all"] = sorted(set(sum(extras.values(), [])))
@@ -96,11 +95,11 @@ setuptools.setup(
     zip_safe=False,
     extras_require=extras,
     install_requires=[
-        "attrs>=19.2.0",
+        "attrs>=22.2.0",
         "exceptiongroup>=1.0.0 ; python_version<'3.11'",
         "sortedcontainers>=2.1.0,<3.0.0",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Framework :: Hypothesis",
@@ -113,17 +112,21 @@ setuptools.setup(
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3 :: Only",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: Implementation :: PyPy",
         "Topic :: Education :: Testing",
         "Topic :: Software Development :: Testing",
         "Typing :: Typed",
     ],
-    py_modules=["_hypothesis_pytestplugin", "_hypothesis_ftz_detector"],
+    py_modules=[
+        "_hypothesis_pytestplugin",
+        "_hypothesis_ftz_detector",
+        "_hypothesis_globals",
+    ],
     entry_points={
         "pytest11": ["hypothesispytest = _hypothesis_pytestplugin"],
         "console_scripts": ["hypothesis = hypothesis.extra.cli:main"],

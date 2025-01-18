@@ -11,12 +11,11 @@
 import inspect
 import math
 from random import Random
-from typing import Dict
+from typing import Any
 
 import attr
 
 from hypothesis.control import should_note
-from hypothesis.internal.conjecture import utils as cu
 from hypothesis.internal.reflection import define_function_signature
 from hypothesis.reporting import report
 from hypothesis.strategies._internal.core import (
@@ -111,7 +110,7 @@ def _randbelow(self, n: int) -> int:  # type: ignore
 STUBS = {f.__name__: f for f in [getrandbits, random, _randbelow]}
 
 
-SIGNATURES: Dict[str, inspect.Signature] = {}
+SIGNATURES: dict[str, inspect.Signature] = {}
 
 
 def sig_of(name):
@@ -152,8 +151,8 @@ for r in RANDOM_METHODS:
 
 @attr.s(slots=True)
 class RandomState:
-    next_states = attr.ib(default=attr.Factory(dict))
-    state_id = attr.ib(default=None)
+    next_states: dict = attr.ib(factory=dict)
+    state_id: Any = attr.ib(default=None)
 
 
 def state_for_seed(data, seed):
@@ -223,7 +222,7 @@ class ArtificialRandom(HypothesisRandom):
         elif method == "shuffle":
             key = (method, len(kwargs["x"]))
         else:
-            key = (method,) + tuple(sorted(kwargs))
+            key = (method, *sorted(kwargs))
 
         try:
             result, self.__state = self.__state.next_states[key]
@@ -233,7 +232,7 @@ class ArtificialRandom(HypothesisRandom):
             return self.__convert_result(method, kwargs, result)
 
         if method == "_randbelow":
-            result = cu.integer_range(self.__data, 0, kwargs["n"] - 1)
+            result = self.__data.draw_integer(0, kwargs["n"] - 1)
         elif method in ("betavariate", "random"):
             result = self.__data.draw(UNIFORM)
         elif method == "uniform":
@@ -266,18 +265,18 @@ class ArtificialRandom(HypothesisRandom):
                 if (start - stop) % step == 0:
                     endpoint -= 1
 
-                i = cu.integer_range(self.__data, 0, endpoint)
+                i = self.__data.draw_integer(0, endpoint)
                 result = start + i * step
             else:
-                result = cu.integer_range(self.__data, start, stop - 1)
+                result = self.__data.draw_integer(start, stop - 1)
         elif method == "randint":
-            result = cu.integer_range(self.__data, kwargs["a"], kwargs["b"])
+            result = self.__data.draw_integer(kwargs["a"], kwargs["b"])
         # New in Python 3.12, so not taken by our coverage job
         elif method == "binomialvariate":  # pragma: no cover
-            result = cu.integer_range(self.__data, 0, kwargs["n"])
+            result = self.__data.draw_integer(0, kwargs["n"])
         elif method == "choice":
             seq = kwargs["seq"]
-            result = cu.integer_range(self.__data, 0, len(seq) - 1)
+            result = self.__data.draw_integer(0, len(seq) - 1)
         elif method == "choices":
             k = kwargs["k"]
             result = self.__data.draw(
@@ -296,24 +295,27 @@ class ArtificialRandom(HypothesisRandom):
                     f"Sample size {k} not in expected range 0 <= k <= {len(seq)}"
                 )
 
-            result = self.__data.draw(
-                lists(
-                    sampled_from(range(len(seq))),
-                    min_size=k,
-                    max_size=k,
-                    unique=True,
+            if k == 0:
+                result = []
+            else:
+                result = self.__data.draw(
+                    lists(
+                        sampled_from(range(len(seq))),
+                        min_size=k,
+                        max_size=k,
+                        unique=True,
+                    )
                 )
-            )
 
         elif method == "getrandbits":
-            result = self.__data.draw_bits(kwargs["n"])
+            result = self.__data.draw_integer(0, 2 ** kwargs["n"] - 1)
         elif method == "triangular":
             low = normalize_zero(kwargs["low"])
             high = normalize_zero(kwargs["high"])
             mode = normalize_zero(kwargs["mode"])
             if mode is None:
                 result = self.__data.draw(floats(low, high))
-            elif self.__data.draw_bits(1):
+            elif self.__data.draw_boolean(0.5):
                 result = self.__data.draw(floats(mode, high))
             else:
                 result = self.__data.draw(floats(low, mode))
@@ -362,30 +364,31 @@ def convert_kwargs(name, kwargs):
     kwargs = dict(kwargs)
 
     signature = sig_of(name)
+    params = signature.parameters
 
     bound = signature.bind(DUMMY_RANDOM, **kwargs)
     bound.apply_defaults()
 
     for k in list(kwargs):
         if (
-            kwargs[k] is signature.parameters[k].default
-            or signature.parameters[k].kind != inspect.Parameter.KEYWORD_ONLY
+            kwargs[k] is params[k].default
+            or params[k].kind != inspect.Parameter.KEYWORD_ONLY
         ):
             kwargs.pop(k)
 
-    arg_names = list(signature.parameters)[1:]
+    arg_names = list(params)[1:]
 
     args = []
 
     for a in arg_names:
-        if signature.parameters[a].kind == inspect.Parameter.KEYWORD_ONLY:
+        if params[a].kind == inspect.Parameter.KEYWORD_ONLY:
             break
         args.append(bound.arguments[a])
         kwargs.pop(a, None)
 
     while args:
         name = arg_names[len(args) - 1]
-        if args[-1] is signature.parameters[name].default:
+        if args[-1] is params[name].default:
             args.pop()
         else:
             break
@@ -400,9 +403,13 @@ class TrueRandom(HypothesisRandom):
         self.__random = Random(seed)
 
     def _hypothesis_do_random(self, method, kwargs):
+        fn = getattr(self.__random, method)
+        try:
+            return fn(**kwargs)
+        except TypeError:
+            pass
         args, kwargs = convert_kwargs(method, kwargs)
-
-        return getattr(self.__random, method)(*args, **kwargs)
+        return fn(*args, **kwargs)
 
     def __copy__(self):
         result = TrueRandom(
@@ -433,7 +440,7 @@ class RandomStrategy(SearchStrategy):
 
     def do_draw(self, data):
         if self.__use_true_random:
-            seed = data.draw_bits(64)
+            seed = data.draw_integer(0, 2**64 - 1)
             return TrueRandom(seed=seed, note_method_calls=self.__note_method_calls)
         else:
             return ArtificialRandom(

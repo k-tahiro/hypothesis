@@ -15,23 +15,12 @@ import re
 import socket
 import unittest
 import unittest.mock
+from collections.abc import KeysView, Sequence, Sized, ValuesView
 from decimal import Decimal
 from pathlib import Path
 from textwrap import dedent
 from types import FunctionType, ModuleType
-from typing import (
-    Any,
-    FrozenSet,
-    KeysView,
-    List,
-    Match,
-    Pattern,
-    Sequence,
-    Set,
-    Sized,
-    Union,
-    ValuesView,
-)
+from typing import Any, Union
 
 import attr
 import click
@@ -112,7 +101,7 @@ def test_ghostwriter_exploits_arguments_with_enum_defaults():
         test()
 
 
-def timsort(seq: Sequence[int]) -> List[int]:
+def timsort(seq: Sequence[int]) -> list[int]:
     return sorted(seq)
 
 
@@ -150,11 +139,11 @@ def takes_values(x: ValuesView[int]) -> None:
     pass
 
 
-def takes_match(x: Match[bytes]) -> None:
+def takes_match(x: re.Match[bytes]) -> None:
     pass
 
 
-def takes_pattern(x: Pattern[str]) -> None:
+def takes_pattern(x: re.Pattern[str]) -> None:
     pass
 
 
@@ -162,7 +151,7 @@ def takes_sized(x: Sized) -> None:
     pass
 
 
-def takes_frozensets(a: FrozenSet[int], b: FrozenSet[int]) -> None:
+def takes_frozensets(a: frozenset[int], b: frozenset[int]) -> None:
     pass
 
 
@@ -223,7 +212,7 @@ def test_ghostwriter_unittest_style(func, ex):
     assert issubclass(get_test_function(source_code), unittest.TestCase)
 
 
-def no_annotations(foo=None, bar=False):
+def no_annotations(foo=None, *, bar=False):
     pass
 
 
@@ -232,7 +221,7 @@ def test_inference_from_defaults_and_none_booleans_reprs_not_just_and_sampled_fr
     assert "@given(foo=st.none(), bar=st.booleans())" in source_code
 
 
-def hopefully_hashable(foo: Set[Decimal]):
+def hopefully_hashable(foo: set[Decimal]):
     pass
 
 
@@ -273,7 +262,7 @@ class A:
         return json.loads(obj)
 
     @staticmethod
-    def static_sorter(seq: Sequence[int]) -> List[int]:
+    def static_sorter(seq: Sequence[int]) -> list[int]:
         return sorted(seq)
 
 
@@ -500,7 +489,7 @@ def test_obj_name(temp_script_file, temp_script_file_with_py_function):
     )
     # Windows paths (strings including a "\") should also raise a meaningful UsageError
     with pytest.raises(click.exceptions.UsageError) as e:
-        cli.obj_name("mydirectory\\myscript.py")
+        cli.obj_name(R"mydirectory\myscript.py")
     assert e.match(
         "Remember that the ghostwriter should be passed the name of a module, not a path."
     )

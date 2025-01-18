@@ -1,6 +1,6 @@
-===================================
-Hypothesis for the scientific stack
-===================================
+===========================
+Hypothesis for data science
+===========================
 
 .. _hypothesis-numpy:
 
@@ -47,7 +47,7 @@ Supported versions
 There is quite a lot of variation between pandas versions. We only
 commit to supporting the latest version of pandas, but older minor versions are
 supported on a "best effort" basis.  Hypothesis is currently tested against
-and confirmed working with every Pandas minor version from 1.1 through to 2.0.
+and confirmed working with every Pandas minor version from 1.1 through to 2.2.
 
 Releases that are not the latest patch release of their minor version are not
 tested or officially supported, but will probably also work unless you hit a
@@ -61,9 +61,9 @@ Array API
 
 Hypothesis offers strategies for `Array API <https://data-apis.org/>`_ adopting
 libraries in the ``hypothesis.extra.array_api`` package. See :issue:`3037` for
-more details.  If you want to test with :pypi:`CuPy`, :pypi:`Dask`, :pypi:`JAX`,
-:pypi:`MXNet`, :pypi:`PyTorch <torch>`, :pypi:`TensorFlow`, or :pypi:`Xarray` -
-or just ``numpy.array_api`` - this is the extension for you!
+more details.  If you want to test with :pypi:`CuPy <cupy>`, :pypi:`Dask <dask>`, :pypi:`JAX <jax>`,
+:pypi:`MXNet <maxnet>`, :pypi:`PyTorch <torch>`, :pypi:`TensorFlow <tensorflow>`, or :pypi:`Xarray <xarray>` -
+or just :pypi:`NumPy <numpy>` - this is the extension for you!
 
 .. autofunction:: hypothesis.extra.array_api.make_strategies_namespace
 

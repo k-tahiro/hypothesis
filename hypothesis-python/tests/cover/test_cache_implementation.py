@@ -23,10 +23,13 @@ from hypothesis import (
     settings,
     strategies as st,
 )
-from hypothesis.internal.cache import GenericCache, LRUReusedCache
+from hypothesis.errors import InvalidArgument
+from hypothesis.internal.cache import GenericCache, LRUCache, LRUReusedCache
+
+from tests.common.utils import skipif_emscripten
 
 
-class LRUCache(GenericCache):
+class LRUCacheAlternative(GenericCache):
     __slots__ = ("__tick",)
 
     def __init__(self, max_size):
@@ -53,14 +56,18 @@ class LFUCache(GenericCache):
 
 
 @st.composite
-def write_pattern(draw, min_size=0):
-    keys = draw(st.lists(st.integers(0, 1000), unique=True, min_size=1))
-    values = draw(st.lists(st.integers(), unique=True, min_size=1))
-    return draw(
-        st.lists(
-            st.tuples(st.sampled_from(keys), st.sampled_from(values)), min_size=min_size
-        )
+def write_pattern(draw, min_distinct_keys=0):
+    keys = draw(
+        st.lists(st.integers(0, 1000), unique=True, min_size=max(min_distinct_keys, 1))
     )
+    values = draw(st.lists(st.integers(), unique=True, min_size=1))
+    s = st.lists(
+        st.tuples(st.sampled_from(keys), st.sampled_from(values)),
+        min_size=min_distinct_keys,
+    )
+    if min_distinct_keys > 0:
+        s = s.filter(lambda ls: len({k for k, _ in ls}) >= min_distinct_keys)
+    return draw(s)
 
 
 class ValueScored(GenericCache):
@@ -81,7 +88,8 @@ class RandomCache(GenericCache):
 
 
 @pytest.mark.parametrize(
-    "implementation", [LRUCache, LFUCache, LRUReusedCache, ValueScored, RandomCache]
+    "implementation",
+    [LRUCache, LFUCache, LRUReusedCache, ValueScored, RandomCache, LRUCacheAlternative],
 )
 @example(writes=[(0, 0), (3, 0), (1, 0), (2, 0), (2, 0), (1, 0)], size=4)
 @example(writes=[(0, 0)], size=1)
@@ -108,8 +116,12 @@ def test_behaves_like_a_dict_with_losses(implementation, writes, size):
         assert len(target) <= min(len(model), size)
 
 
-@settings(suppress_health_check=[HealthCheck.too_slow], deadline=None)
-@given(write_pattern(min_size=2), st.data())
+@settings(
+    suppress_health_check={HealthCheck.too_slow}
+    | set(settings.get_profile(settings._current_profile).suppress_health_check),
+    deadline=None,
+)
+@given(write_pattern(min_distinct_keys=2), st.data())
 def test_always_evicts_the_lowest_scoring_value(writes, data):
     scores = {}
 
@@ -125,11 +137,12 @@ def test_always_evicts_the_lowest_scoring_value(writes, data):
         scores[key] = data.draw(st.integers(0, 1000), label=f"scores[{key!r}]")
         return scores[key]
 
-    last_entry = [None]
+    last_entry = None
 
     class Cache(GenericCache):
         def new_entry(self, key, value):
-            last_entry[0] = key
+            nonlocal last_entry
+            last_entry = key
             evicted.discard(key)
             assert key not in scores
             return new_score(key)
@@ -143,7 +156,7 @@ def test_always_evicts_the_lowest_scoring_value(writes, data):
             assert score == scores[key]
             del scores[key]
             if len(scores) > 1:
-                assert score <= min(v for k, v in scores.items() if k != last_entry[0])
+                assert score <= min(v for k, v in scores.items() if k != last_entry)
             evicted.add(key)
 
     target = Cache(max_size=size)
@@ -184,17 +197,14 @@ def test_can_clear_a_cache():
     assert len(x) == 0
 
 
-def test_max_size_cache_ignores():
-    x = ValueScored(0)
-    x[0] = 1
-    with pytest.raises(KeyError):
-        x[0]
+def test_max_size_must_be_positive():
+    with pytest.raises(InvalidArgument):
+        ValueScored(max_size=0)
 
 
 def test_pinning_prevents_eviction():
     cache = LRUReusedCache(max_size=10)
-    cache[20] = 1
-    cache.pin(20)
+    cache.pin(20, 1)
     for i in range(20):
         cache[i] = 0
     assert cache[20] == 1
@@ -202,8 +212,7 @@ def test_pinning_prevents_eviction():
 
 def test_unpinning_allows_eviction():
     cache = LRUReusedCache(max_size=10)
-    cache[20] = True
-    cache.pin(20)
+    cache.pin(20, True)
     for i in range(20):
         cache[i] = False
 
@@ -217,23 +226,27 @@ def test_unpinning_allows_eviction():
 
 def test_unpins_must_match_pins():
     cache = LRUReusedCache(max_size=2)
-    cache[1] = 1
-    cache.pin(1)
+    cache.pin(1, 1)
     assert cache.is_pinned(1)
-    cache.pin(1)
+    assert cache[1] == 1
+    cache.pin(1, 2)
     assert cache.is_pinned(1)
+    assert cache[1] == 2
     cache.unpin(1)
     assert cache.is_pinned(1)
+    assert cache[1] == 2
     cache.unpin(1)
     assert not cache.is_pinned(1)
 
 
 def test_will_error_instead_of_evicting_pin():
     cache = LRUReusedCache(max_size=1)
-    cache[1] = 1
-    cache.pin(1)
+    cache.pin(1, 1)
     with pytest.raises(ValueError):
         cache[2] = 2
+
+    assert 1 in cache
+    assert 2 not in cache
 
 
 def test_will_error_for_bad_unpin():
@@ -273,19 +286,17 @@ def test_does_insert_if_score_is_better():
     assert len(cache) == 1
 
 
-def test_double_pinning_does_not_increase_pin_count():
+def test_double_pinning_does_not_add_entry():
     cache = LRUReusedCache(2)
-    cache[0] = 0
-    cache.pin(0)
-    cache.pin(0)
+    cache.pin(0, 0)
+    cache.pin(0, 1)
     cache[1] = 1
     assert len(cache) == 2
 
 
 def test_can_add_new_keys_after_unpinning():
     cache = LRUReusedCache(1)
-    cache[0] = 0
-    cache.pin(0)
+    cache.pin(0, 0)
     cache.unpin(0)
     cache[1] = 1
     assert len(cache) == 1
@@ -299,6 +310,16 @@ def test_iterates_over_remaining_keys():
     assert sorted(cache) == [1, 2]
 
 
+def test_lru_cache_is_actually_lru():
+    cache = LRUCache(2)
+    cache[1] = 1  # [1]
+    cache[2] = 2  # [1, 2]
+    cache[1]  # [2, 1]
+    cache[3] = 2  # [2, 1, 3] -> drop least recently used -> [1, 3]
+    assert list(cache) == [1, 3]
+
+
+@skipif_emscripten
 def test_cache_is_threadsafe_issue_2433_regression():
     errors = []
 
@@ -316,19 +337,3 @@ def test_cache_is_threadsafe_issue_2433_regression():
         worker.join()
 
     assert not errors
-
-
-def test_pin_and_unpin_are_noops_if_dropped():
-    # See https://github.com/HypothesisWorks/hypothesis/issues/3169
-    cache = LRUReusedCache(max_size=10)
-    cache[30] = True
-    assert 30 in cache
-
-    for i in range(20):
-        cache[i] = False
-
-    assert 30 not in cache
-    cache.pin(30)
-    assert 30 not in cache
-    cache.unpin(30)
-    assert 30 not in cache

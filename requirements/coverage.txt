@@ -4,92 +4,98 @@
 #
 #    ./build.sh upgrade-requirements
 #
-async-timeout==4.0.3
-    # via redis
-attrs==23.1.0
-    # via hypothesis (hypothesis-python/setup.py)
-black @ git+https://github.com/psf/black.git@eedfc3832290b3a32825b3c0f2dfa3f3d7ee9d1c
+annotated-types==0.7.0
     # via -r requirements/coverage.in
-click==8.1.7
+async-timeout==5.0.1
+    # via redis
+attrs==24.1.0
+    # via
+    #   -r requirements/test.in
+    #   hypothesis (hypothesis-python/setup.py)
+black==24.10.0
+    # via -r requirements/coverage.in
+click==8.1.8
     # via
     #   -r requirements/coverage.in
     #   black
-coverage==7.3.0
-    # via -r requirements/coverage.in
+coverage[toml]==7.6.10
+    # via pytest-cov
 dpcontracts==0.6.0
     # via -r requirements/coverage.in
-exceptiongroup==1.1.3 ; python_version < "3.11"
+exceptiongroup==1.2.2 ; python_version < "3.11"
     # via
     #   hypothesis (hypothesis-python/setup.py)
     #   pytest
-execnet==2.0.2
+execnet==2.1.1
     # via pytest-xdist
-fakeredis==2.18.0
+fakeredis==2.26.2
     # via -r requirements/coverage.in
 iniconfig==2.0.0
     # via pytest
-lark==1.1.7
+lark==1.2.2
     # via -r requirements/coverage.in
-libcst==1.0.1
+libcst==1.6.0
     # via -r requirements/coverage.in
 mypy-extensions==1.0.0
-    # via
-    #   black
-    #   typing-inspect
-numpy==1.25.2
+    # via black
+numpy==2.2.1
     # via
     #   -r requirements/coverage.in
     #   pandas
-packaging==23.1
+packaging==24.2
     # via
     #   black
     #   pytest
-pandas==2.0.3
+pandas==2.2.3
     # via -r requirements/coverage.in
-pathspec==0.11.2
+pathspec==0.12.1
     # via black
-pexpect==4.8.0
+pexpect==4.9.0
     # via -r requirements/test.in
-platformdirs==3.10.0
+platformdirs==4.3.6
     # via black
-pluggy==1.3.0
+pluggy==1.5.0
     # via pytest
 ptyprocess==0.7.0
     # via pexpect
-pytest==7.4.0
+pyarrow==18.1.0
+    # via -r requirements/coverage.in
+pytest==8.3.4
     # via
     #   -r requirements/test.in
+    #   pytest-cov
     #   pytest-xdist
-pytest-xdist==3.3.1
+pytest-cov==6.0.0
+    # via -r requirements/coverage.in
+pytest-xdist==3.6.1
     # via -r requirements/test.in
-python-dateutil==2.8.2
+python-dateutil==2.9.0.post0
     # via
     #   -r requirements/coverage.in
     #   pandas
-pytz==2023.3
+pytz==2024.2
     # via
     #   -r requirements/coverage.in
     #   pandas
-pyyaml==6.0.1
+pyyaml==6.0.2
     # via libcst
-redis==5.0.0
+redis==5.2.1
     # via fakeredis
-six==1.16.0
+six==1.17.0
     # via python-dateutil
 sortedcontainers==2.4.0
     # via
     #   fakeredis
     #   hypothesis (hypothesis-python/setup.py)
-tomli==2.0.1
+tomli==2.2.1
     # via
     #   black
+    #   coverage
     #   pytest
-typing-extensions==4.7.1
+typing-extensions==4.12.2
     # via
     #   -r requirements/coverage.in
-    #   libcst
-    #   typing-inspect
-typing-inspect==0.9.0
-    # via libcst
-tzdata==2023.3
+    #   black
+    #   fakeredis
+tzdata==2024.2
     # via pandas

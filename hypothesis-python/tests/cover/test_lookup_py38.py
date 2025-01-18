@@ -10,21 +10,24 @@
 
 import dataclasses
 import re
-import sys
 import typing
 from types import SimpleNamespace
 
 import pytest
 
 from hypothesis import example, given, strategies as st
-from hypothesis.errors import InvalidArgument, Unsatisfiable
+from hypothesis.errors import InvalidArgument
 from hypothesis.internal.reflection import (
     convert_positional_arguments,
     get_pretty_function_description,
 )
 from hypothesis.strategies import from_type
 
-from tests.common.debug import find_any
+from tests.common.debug import (
+    assert_simple_property,
+    check_can_generate_examples,
+    find_any,
+)
 from tests.common.utils import fails_with, temp_registered
 
 
@@ -36,7 +39,7 @@ def test_typing_Final(data):
 
 @pytest.mark.parametrize("value", ["dog", b"goldfish", 42, 63.4, -80.5, False])
 def test_typing_Literal(value):
-    assert from_type(typing.Literal[value]).example() == value
+    assert_simple_property(from_type(typing.Literal[value]), lambda v: v == value)
 
 
 @given(st.data())
@@ -79,15 +82,6 @@ def test_typeddict_with_optional(value):
         assert isinstance(value["b"], bool)
 
 
-if sys.version_info[:2] < (3, 9):
-    xfail_on_38 = pytest.mark.xfail(raises=Unsatisfiable)
-else:
-
-    def xfail_on_38(f):
-        return f
-
-
-@xfail_on_38
 def test_simple_optional_key_is_optional():
     # Optional keys are not currently supported, as PEP-589 leaves no traces
     # at runtime.  See https://github.com/python/cpython/pull/17214
@@ -120,7 +114,6 @@ def test_typeddict_with_nested_value(value):
     assert isinstance(value["inner"]["a"], int)
 
 
-@xfail_on_38
 def test_layered_optional_key_is_optional():
     # Optional keys are not currently supported, as PEP-589 leaves no traces
     # at runtime.  See https://github.com/python/cpython/pull/17214
@@ -141,7 +134,7 @@ def test_can_resolve_recursive_dataclass(val):
 def test_can_register_new_type_for_typeddicts():
     sentinel = object()
     with temp_registered(C, st.just(sentinel)):
-        assert st.from_type(C).example() is sentinel
+        assert_simple_property(st.from_type(C), lambda v: v is sentinel)
 
 
 @pytest.mark.parametrize(
@@ -248,4 +241,4 @@ def test_can_resolve_registered_protocol(data):
 def test_cannot_resolve_un_registered_protocol():
     msg = "Instance and class checks can only be used with @runtime_checkable protocols"
     with pytest.raises(TypeError, match=msg):
-        st.from_type(BarProtocol).example()
+        check_can_generate_examples(st.from_type(BarProtocol))

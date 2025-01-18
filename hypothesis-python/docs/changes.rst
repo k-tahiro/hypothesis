@@ -18,6 +18,2024 @@ Hypothesis 6.x
 
     .. include:: ../RELEASE.rst
 
+.. _v6.124.1:
+
+--------------------
+6.124.1 - 2025-01-18
+--------------------
+
+:ref:`fuzz_one_input <fuzz_one_input>` is now implemented using an :ref:`alternative backend <alternative-backends>`. This brings the interpretation of the fuzzer-provided bytestring closer to the fuzzer mutations, allowing the mutations to work more reliably. We hope to use this backend functionality to improve fuzzing integration (see e.g. https://github.com/google/atheris/issues/20) in the future!
+
+.. _v6.124.0:
+
+--------------------
+6.124.0 - 2025-01-16
+--------------------
+
+The :doc:`Hypothesis example database <database>` now uses a new internal format to store examples. This new format is not compatible with the previous format, so stored entries will not carry over.
+
+The database is best thought of as a cache that may be invalidated at times. Instead of relying on it for correctness, we recommend using :obj:`@example <hypothesis.example>` to specify explicit examples. When using databases across environments (such as connecting a :class:`~hypothesis.database.GitHubArtifactDatabase` database in CI to your local environment), we recommend using the same version of Hypothesis for each where possible, for maximum reproducibility.
+
+.. _v6.123.17:
+
+---------------------
+6.123.17 - 2025-01-13
+---------------------
+
+This patch improves certain corner cases for reporting of flaky errors
+(:issue:`4183` and :issue:`4228`).
+
+.. _v6.123.16:
+
+---------------------
+6.123.16 - 2025-01-13
+---------------------
+
+Improves an edge case in one of our integer and float shrinking passes.
+
+.. _v6.123.15:
+
+---------------------
+6.123.15 - 2025-01-11
+---------------------
+
+Improves one of our shrinking passes for integers which require a constant relative difference to trigger the bug.
+
+.. _v6.123.14:
+
+---------------------
+6.123.14 - 2025-01-11
+---------------------
+
+Avoid realizing symbolic values from :ref:`alternative-backends` when :obj:`~hypothesis.settings.verbosity` is ``verbose`` or higher.
+
+.. _v6.123.13:
+
+---------------------
+6.123.13 - 2025-01-09
+---------------------
+
+More internal code refactoring.
+
+.. _v6.123.12:
+
+---------------------
+6.123.12 - 2025-01-09
+---------------------
+
+:class:`~hypothesis.database.DirectoryBasedExampleDatabase` now creates files representing database entries atomically, avoiding a very brief intermediary state where a file could be created but not yet written to.
+
+.. _v6.123.11:
+
+---------------------
+6.123.11 - 2025-01-09
+---------------------
+
+Internal code refactoring.
+
+.. _v6.123.10:
+
+---------------------
+6.123.10 - 2025-01-09
+---------------------
+
+Fixes a bug caused by :ref:`alternative backends <alternative-backends>` raising ``hypothesis.errors.BackendCannotProceed`` in certain cases.
+
+.. _v6.123.9:
+
+--------------------
+6.123.9 - 2025-01-08
+--------------------
+
+Add internal type hints to our pretty printer.
+
+.. _v6.123.8:
+
+--------------------
+6.123.8 - 2025-01-08
+--------------------
+
+The shrinker contains a pass aimed at integers which are required to sum to a value. This patch extends that pass to floats as well.
+
+.. _v6.123.7:
+
+--------------------
+6.123.7 - 2025-01-07
+--------------------
+
+Internal type hint additions and refactorings.
+
+.. _v6.123.6:
+
+--------------------
+6.123.6 - 2025-01-07
+--------------------
+
+:func:`@reproduce_failure() <hypothesis.reproduce_failure>` now uses a newer internal interface to represent failures. As a reminder, this representation is not intended to be stable across versions or with respect to changes in the test.
+
+.. _v6.123.5:
+
+--------------------
+6.123.5 - 2025-01-07
+--------------------
+
+Internal code refactoring for the typed choice sequence (:issue:`3921`). May have some neutral effect on shrinking.
+
+.. _v6.123.4:
+
+--------------------
+6.123.4 - 2025-01-06
+--------------------
+
+This patch improves shrinking involving long strings or byte sequences whose value is not relevant to the failure.
+
+.. _v6.123.3:
+
+--------------------
+6.123.3 - 2025-01-06
+--------------------
+
+This release further improves shrinking of strategies using :func:`~hypothesis.strategies.one_of`,
+allowing the shrinker to more reliably move between branches of the strategy.
+
+.. _v6.123.2:
+
+--------------------
+6.123.2 - 2024-12-27
+--------------------
+
+The shrinker now uses the typed choice sequence (:issue:`3921`) when ordering failing examples. As a result, Hypothesis may now report a different minimal failing example for some tests. We expect most cases to remain unchanged.
+
+.. _v6.123.1:
+
+--------------------
+6.123.1 - 2024-12-24
+--------------------
+
+Our pytest plugin now emits a warning if you set Pytest's ``norecursedirs``
+config option in such a way that the ``.hypothesis`` directory would be
+searched for tests.  This reliably indicates that you've made a mistake
+which slows down test collection, usually assuming that your configuration
+extends the set of ignored patterns when it actually replaces them.
+(:issue:`4200`)
+
+.. _v6.123.0:
+
+--------------------
+6.123.0 - 2024-12-23
+--------------------
+
+:func:`~hypothesis.strategies.from_type` can now handle constructors with
+required positional-only arguments if they have type annotations.  Previously,
+we only passed arguments by keyword.
+
+.. _v6.122.7:
+
+--------------------
+6.122.7 - 2024-12-23
+--------------------
+
+This patch lays some groundwork for migrating our internal representation to the typed choice sequence (:issue:`3921`)
+
+.. _v6.122.6:
+
+--------------------
+6.122.6 - 2024-12-21
+--------------------
+
+This patch cleans up some internal code around clamping floats.
+
+.. _v6.122.5:
+
+--------------------
+6.122.5 - 2024-12-20
+--------------------
+
+This release improves shrinking in some cases, especially for strategies using :func:`~hypothesis.strategies.one_of`.
+This will typically improve shrinking speed and may in some cases improve the end result.
+
+.. _v6.122.4:
+
+--------------------
+6.122.4 - 2024-12-19
+--------------------
+
+This patch improves generation performance for the provisional :func:`~hypothesis.provisional.domains` strategy, including its derivative strategies :func:`~hypothesis.provisional.urls` and :func:`~hypothesis.strategies.emails`.
+
+.. _v6.122.3:
+
+--------------------
+6.122.3 - 2024-12-08
+--------------------
+
+This patch improves our error and warning messages.
+
+- Add a warning for ``st.text("ascii")`` - you probably meant ``st.text(st.characters(codec="ascii"))``. Similarly for ``"utf-8"``.
+- Recommend remedies in the error message of ``Unsatisfiable``.
+- When ``@given`` errors because it was given an extra keyword argument, and the keyword matches a setting name like ``max_examples``, recommend ``@settings(max_examples=...)`` instead.
+
+.. _v6.122.2:
+
+--------------------
+6.122.2 - 2024-12-08
+--------------------
+
+This patch updates some outdated external links in our documentation.
+
+.. _v6.122.1:
+
+--------------------
+6.122.1 - 2024-12-01
+--------------------
+
+Fix :func:`~hypothesis.strategies.from_type`
+on :class:`collections.abc.Callable` returning ``None``.
+
+.. _v6.122.0:
+
+--------------------
+6.122.0 - 2024-11-29
+--------------------
+
+This release adds ``.span_start()`` and ``.span_end()`` methods
+to our internal ``PrimitiveProvider`` interface, for use by
+:ref:`alternative-backends`.
+
+.. _v6.121.2:
+
+--------------------
+6.121.2 - 2024-11-29
+--------------------
+
+This patch updates our autoformatting tools, improving our code style without any API changes.
+
+.. _v6.121.1:
+
+--------------------
+6.121.1 - 2024-11-29
+--------------------
+
+This release brings back the old representation of :class:`hypothesis.stateful.Bundle`, reverting most changes of `PR #4124 <https://github.com/HypothesisWorks/hypothesis/pull/4124>`_.
+
+.. _v6.121.0:
+
+--------------------
+6.121.0 - 2024-11-28
+--------------------
+
+This release adds :class:`~hypothesis.database.BackgroundWriteDatabase`, a new database backend which defers writes on the wrapped database to a background thread. This allows for low-overhead writes in performance-critical environments like :ref:`fuzz_one_input <fuzz_one_input>`.
+
+.. _v6.120.0:
+
+--------------------
+6.120.0 - 2024-11-27
+--------------------
+
+* This release changes our input distribution for low ``max_examples``. Previously, we capped the size of inputs when generating at least the first 10 inputs, with the reasoning that early inputs to a property should be small. However, this meant properties with ``max_examples=10`` would consistent entirely of small inputs. This patch removes the hard lower bound so that inputs to these properties are more representative of the input space.
+* When a user requests an interactive input via ``strategy.example``, we generate and cache a batch of 100 inputs, returning the first one. This can be expensive for large strategies or when only a few examples are needed. This release improves the speed of ``strategy.example`` by lowering the batch size to 10.
+
+.. _v6.119.4:
+
+--------------------
+6.119.4 - 2024-11-22
+--------------------
+
+This patch fixes a bug since :ref:`v6.99.13` where only interactively-generated values (via ``data.draw``) would be reported in the ``arguments`` field of our :doc:`observability output <observability>`. Now, all values are reported.
+
+.. _v6.119.3:
+
+--------------------
+6.119.3 - 2024-11-17
+--------------------
+
+Hypothesis collects coverage information during the ``shrink`` and ``explain`` :ref:`phases <phases>` in order to show a more informative error message. On 3.12+, this uses :mod:`sys.monitoring`. This patch improves the performance of coverage collection on 3.12+ by disabling events we don't need.
+
+.. _v6.119.2:
+
+--------------------
+6.119.2 - 2024-11-17
+--------------------
+
+This patch refactors some internals to prepare for future work using our IR (:issue:`3921`).
+
+.. _v6.119.1:
+
+--------------------
+6.119.1 - 2024-11-15
+--------------------
+
+This patch migrates some more internals (around generating novel inputs) to the IR layer (:issue:`3921`).
+
+.. _v6.119.0:
+
+--------------------
+6.119.0 - 2024-11-15
+--------------------
+
+This release improves Hypothesis' handling of ExceptionGroup - it's now able to detect marker detections if they're inside a  group and attempts to resolve them. Note that this handling is still a work in progress and might not handle edge cases optimally. Please open issues if you encounter any problems or unexpected behavior with it.
+
+.. _v6.118.9:
+
+--------------------
+6.118.9 - 2024-11-15
+--------------------
+
+Internal refactorings in preparation for upcoming changes.
+
+.. _v6.118.8:
+
+--------------------
+6.118.8 - 2024-11-12
+--------------------
+
+Internal renamings.
+
+.. _v6.118.7:
+
+--------------------
+6.118.7 - 2024-11-10
+--------------------
+
+This patch removes some ``# type: ignore`` comments following a :pypi:`mypy` update.
+
+.. _v6.118.6:
+
+--------------------
+6.118.6 - 2024-11-10
+--------------------
+
+When Hypothesis replays examples from its test database that it knows were previously fully shrunk it will no longer try to shrink them again.
+
+This should significantly speed up development workflows for slow tests, as the shrinking could contribute a significant delay when rerunning the tests.
+
+In some rare cases this may cause minor reductions in example quality. This was considered an acceptable tradeoff for the improved test runtime.
+
+.. _v6.118.5:
+
+--------------------
+6.118.5 - 2024-11-10
+--------------------
+
+This patch avoids computing some string representations we won't need,
+giving a small speedup (part of :issue:`4139`).
+
+.. _v6.118.4:
+
+--------------------
+6.118.4 - 2024-11-10
+--------------------
+
+This patch migrates the optimisation algorithm for :ref:`targeted property-based testing <targeted-search>` to our IR layer (:issue:`3921`). This should result in moderately different (and hopefully improved) exploration behavior in tests which use :func:`hypothesis.target`.
+
+.. _v6.118.3:
+
+--------------------
+6.118.3 - 2024-11-10
+--------------------
+
+This patch adds more type hints to internal Hypothesis code.
+
+.. _v6.118.2:
+
+--------------------
+6.118.2 - 2024-11-09
+--------------------
+
+This patch migrates the :obj:`~hypothesis.Phase.explain` :ref:`phase <phases>` to our IR layer (:issue:`3921`). This should improve both its speed and precision.
+
+.. _v6.118.1:
+
+--------------------
+6.118.1 - 2024-11-09
+--------------------
+
+This patch updates some internals around how we determine an input is too large to finish generating.
+
+.. _v6.118.0:
+
+--------------------
+6.118.0 - 2024-11-08
+--------------------
+
+The :func:`~hypothesis.provisional.urls` strategy no longer generates
+URLs where the port number is 0.
+
+This change is motivated by the idea that the generated URLs should, at least in
+theory, be possible to fetch. The port number 0 is special; if a server binds to
+port 0, the kernel will allocate an unused, and non-zero, port instead. That
+means that it's not possible for a server to actually be listening on port 0.
+This motivation is briefly described in the documentation for
+:func:`~hypothesis.provisional.urls`.
+
+Fixes :issue:`4157`.
+
+Thanks to @gmacon for this contribution!
+
+.. _v6.117.0:
+
+--------------------
+6.117.0 - 2024-11-07
+--------------------
+
+This changes the behaviour of settings profiles so that if you reregister the currently loaded profile it will automatically reload it. Previously you would have had to load it again.
+
+In particular this means that if you register a "ci" profile, it will automatically be used when Hypothesis detects you are running on CI.
+
+.. _v6.116.0:
+
+--------------------
+6.116.0 - 2024-11-01
+--------------------
+
+Hypothesis now detects if it is running on a CI server and provides better default settings for running on CI in this case.
+
+.. _v6.115.6:
+
+--------------------
+6.115.6 - 2024-10-30
+--------------------
+
+This patch changes the priority order of pretty printing logic so that a user
+provided pretty printing method will always be used in preference to e.g.
+printing it like a dataclass.
+
+.. _v6.115.5:
+
+--------------------
+6.115.5 - 2024-10-23
+--------------------
+
+This patch restores diversity to the outputs of
+:func:`from_type(type) <hypothesis.strategies.from_type>` (:issue:`4144`).
+
+.. _v6.115.4:
+
+--------------------
+6.115.4 - 2024-10-23
+--------------------
+
+This release improves pretty printing of nested classes to include the outer class name in their printed representation.
+
+.. _v6.115.3:
+
+--------------------
+6.115.3 - 2024-10-16
+--------------------
+
+This patch fixes a regression from :ref:`version 6.115.2 <v6.115.2>` where generating values from :func:`~hypothesis.strategies.integers` with certain values for ``min_value`` and ``max_value`` would error.
+
+.. _v6.115.2:
+
+--------------------
+6.115.2 - 2024-10-14
+--------------------
+
+This release improves integer shrinking by folding the endpoint upweighting for :func:`~hypothesis.strategies.integers` into the ``weights`` parameter of our IR (:issue:`3921`).
+
+If you maintain an alternative backend as part of our (for now explicitly unstable) :ref:`alternative-backends`, this release changes the type of the ``weights`` parameter to ``draw_integer`` and may be a breaking change for you.
+
+.. _v6.115.1:
+
+--------------------
+6.115.1 - 2024-10-14
+--------------------
+
+This patch improves the performance of :func:`~hypothesis.strategies.from_type` with
+`pydantic.types.condate <https://docs.pydantic.dev/latest/api/types/#pydantic.types.condate>`__
+(:issue:`4000`).
+
+.. _v6.115.0:
+
+--------------------
+6.115.0 - 2024-10-12
+--------------------
+
+This improves the formatting of dataclasses and attrs classes when printing
+falsifying examples.
+
+.. _v6.114.1:
+
+--------------------
+6.114.1 - 2024-10-10
+--------------------
+
+This patch upgrades remaining type annotations to Python 3.9 syntax.
+
+.. _v6.114.0:
+
+--------------------
+6.114.0 - 2024-10-09
+--------------------
+
+This release drops support for Python 3.8, `which reached end of life on
+2024-10-07 <https://devguide.python.org/versions/>`__.
+
+.. _v6.113.0:
+
+--------------------
+6.113.0 - 2024-10-09
+--------------------
+
+This release adds ``hypothesis.errors.BackendCannotProceed``, an unstable API
+for use by :ref:`alternative-backends`.
+
+.. _v6.112.5:
+
+--------------------
+6.112.5 - 2024-10-08
+--------------------
+
+This release fixes a regression where :class:`hypothesis.stateful.Bundle` did not work properly with :ref:`flatmap <flatmap>` functionality (:issue:`4128`).
+
+.. _v6.112.4:
+
+--------------------
+6.112.4 - 2024-10-06
+--------------------
+
+This patch tweaks the paths in ``@example(...)`` patches, so that
+both ``git apply`` and ``patch`` will work by default.
+
+.. _v6.112.3:
+
+--------------------
+6.112.3 - 2024-10-05
+--------------------
+
+This release refactors internals of :class:`hypothesis.stateful.Bundle` to have a more consistent representation internally.
+
+.. _v6.112.2:
+
+--------------------
+6.112.2 - 2024-09-29
+--------------------
+
+This patch fixes an internal error when the ``__context__``
+attribute of a raised exception leads to a cycle (:issue:`4115`).
+
+.. _v6.112.1:
+
+--------------------
+6.112.1 - 2024-09-13
+--------------------
+
+This patch removes a now-incorrect internal assertion about numpy's typing after recent numpy changes (currently only in numpy's nightly release).
+
+.. _v6.112.0:
+
+--------------------
+6.112.0 - 2024-09-05
+--------------------
+
+This release adds support for variable-width bytes in our IR layer (:issue:`3921`), which should mean improved performance anywhere you use :func:`~hypothesis.strategies.binary`. If you maintain an alternative backend as part of our (for now explicitly unstable) :ref:`alternative-backends`, this release changes the ``draw_*`` interface and may be a breaking change for you.
+
+.. _v6.111.2:
+
+--------------------
+6.111.2 - 2024-08-24
+--------------------
+
+This patch contains some internal code cleanup.  There is no user-visible change.
+
+.. _v6.111.1:
+
+--------------------
+6.111.1 - 2024-08-15
+--------------------
+
+This patch improves shrinking in cases involving 'slips' from one strategy to another. Highly composite strategies are the most likely to benefit from this change.
+
+This patch also reduces the range of :class:`python:datetime.datetime` generated by :func:`~hypothesis.extra.django.from_model` in order to avoid https://code.djangoproject.com/ticket/35683.
+
+.. _v6.111.0:
+
+--------------------
+6.111.0 - 2024-08-11
+--------------------
+
+:ref:`alternative-backends` can now implement ``.observe_test_case()``
+and ``observe_information_message()`` methods, to record backend-specific
+metadata and messages in our :doc:`observability output <observability>`
+(:issue:`3845` and `hypothesis-crosshair#22
+<https://github.com/pschanely/hypothesis-crosshair/issues/22>`__).
+
+.. _v6.110.2:
+
+--------------------
+6.110.2 - 2024-08-11
+--------------------
+
+Support ``__default__`` field of :obj:`~python:typing.TypeVar`
+and support the same from :pypi:`typing-extensions`
+in :func:`~hypothesis.strategies.from_type`.
+
+.. _v6.110.1:
+
+--------------------
+6.110.1 - 2024-08-08
+--------------------
+
+Add better error message for :obj:`!~python:typing.TypeIs` types
+in :func:`~hypothesis.strategies.from_type`.
+
+.. _v6.110.0:
+
+--------------------
+6.110.0 - 2024-08-07
+--------------------
+
+Support :obj:`~python:typing.LiteralString`
+in :func:`~hypothesis.strategies.from_type`.
+
+.. _v6.109.1:
+
+--------------------
+6.109.1 - 2024-08-07
+--------------------
+
+This patch makes progress towards adding type hints to our internal conjecture engine (:issue:`3074`).
+
+.. _v6.109.0:
+
+--------------------
+6.109.0 - 2024-08-07
+--------------------
+
+This release allows using :obj:`~python:typing.Annotated`
+and :obj:`!ReadOnly` types
+for :class:`~python:typing.TypedDict` value types
+with :func:`~hypothesis.strategies.from_type`.
+
+.. _v6.108.10:
+
+---------------------
+6.108.10 - 2024-08-06
+---------------------
+
+This patch fixes compatibility with :pypi:`attrs==24.1.0 <attrs>`
+on the nightly build of CPython, 3.14.0 pre-alpha (:issue:`4067`).
+
+.. _v6.108.9:
+
+--------------------
+6.108.9 - 2024-08-05
+--------------------
+
+This patch removes an assertion which was in fact possible in rare circumstances involving a small number of very large draws.
+
+.. _v6.108.8:
+
+--------------------
+6.108.8 - 2024-08-04
+--------------------
+
+This patch improves our example generation performance by adjusting our internal cache implementation.
+
+.. _v6.108.7:
+
+--------------------
+6.108.7 - 2024-08-04
+--------------------
+
+This patch improves our pretty-printer for unusual numbers.
+
+- Signalling NaNs are now represented by using the :mod:`struct` module
+  to show the exact value by converting from a hexadecimal integer
+
+- CPython `limits integer-to-string conversions
+  <https://docs.python.org/3/library/stdtypes.html#integer-string-conversion-length-limitation>`__
+  to mitigate DDOS attacks.  We now use hexadecimal for very large
+  integers, and include underscore separators for integers with ten
+  or more digits.
+
+.. _v6.108.6:
+
+--------------------
+6.108.6 - 2024-08-04
+--------------------
+
+This patch improves generation speed in some cases by avoiding pretty-printing overhead for non-failing examples.
+
+.. _v6.108.5:
+
+--------------------
+6.108.5 - 2024-07-28
+--------------------
+
+This patch fixes a rare internal error when using :func:`~hypothesis.strategies.integers` with a high number of examples and certain ``{min, max}_value`` parameters (:pull:`4059`).
+
+.. _v6.108.4:
+
+--------------------
+6.108.4 - 2024-07-22
+--------------------
+
+This patch addresses the issue of hypothesis potentially accessing
+mocked ``time.perf_counter`` during test execution (:issue:`4051`).
+
+.. _v6.108.3:
+
+--------------------
+6.108.3 - 2024-07-22
+--------------------
+
+Minor internal-only cleanups to some error-handling and reporting code.
+
+.. _v6.108.2:
+
+--------------------
+6.108.2 - 2024-07-15
+--------------------
+
+This patch disables :func:`hypothesis.target` on alternative
+backends where it would not work.
+
+.. _v6.108.1:
+
+--------------------
+6.108.1 - 2024-07-14
+--------------------
+
+This patch updates our vendored `list of top-level domains <https://www.iana.org/domains/root/db>`__,
+which is used by the provisional :func:`~hypothesis.provisional.domains` strategy.
+
+.. _v6.108.0:
+
+--------------------
+6.108.0 - 2024-07-13
+--------------------
+
+This patch changes most Flaky errors to use an ExceptionGroup, which
+makes the representation of these errors easier to understand.
+
+.. _v6.107.0:
+
+--------------------
+6.107.0 - 2024-07-13
+--------------------
+
+The ``alphabet=`` argument to :func:`~hypothesis.strategies.from_regex`
+now accepts unions of :func:`~hypothesis.strategies.characters` and
+:func:`~hypothesis.strategies.sampled_from` strategies, in addition to
+accepting each individually.
+
+This patch also fixes a bug where ``text(...).filter(re.compile(...).match)``
+could generate non-matching instances if the regex pattern contained ``|``
+(:issue:`4008`).
+
+.. _v6.106.1:
+
+--------------------
+6.106.1 - 2024-07-12
+--------------------
+
+This patch improves our pretty-printer (:issue:`4037`).
+
+It also fixes the codemod for ``HealthCheck.all()`` from
+:ref:`version 6.72 <v6.72.0>`, which was instead trying to
+fix ``Healthcheck.all()`` - note the lower-case ``c``!
+Since our tests had the same typo, it all looked good...
+until :issue:`4030`.
+
+.. _v6.106.0:
+
+--------------------
+6.106.0 - 2024-07-12
+--------------------
+
+This release improves support for unions of :pypi:`numpy` dtypes such as
+``np.float64 | np.complex128`` in :func:`~hypothesis.strategies.from_type`
+and :func:`~hypothesis.extra.numpy.arrays` (:issue:`4041`).
+
+.. _v6.105.2:
+
+--------------------
+6.105.2 - 2024-07-12
+--------------------
+
+This patch improves the reporting of certain flaky errors.
+
+.. _v6.105.1:
+
+--------------------
+6.105.1 - 2024-07-07
+--------------------
+
+This patch iterates on our experimental support for alternative backends (:ref:`alternative-backends`). See :pull:`4029` for details.
+
+.. _v6.105.0:
+
+--------------------
+6.105.0 - 2024-07-04
+--------------------
+
+This release improves support for Django 5.0, and drops support for end-of-life Django versions (< 4.2).
+
+Thanks to Joshua Munn for this contribution.
+
+.. _v6.104.4:
+
+--------------------
+6.104.4 - 2024-07-04
+--------------------
+
+Clean up internal cache implementation.
+
+.. _v6.104.3:
+
+--------------------
+6.104.3 - 2024-07-04
+--------------------
+
+This patch updates our autoformatting tools, improving our code style without any API changes.
+
+.. _v6.104.2:
+
+--------------------
+6.104.2 - 2024-06-29
+--------------------
+
+This patch fixes an issue when realizing symbolics with our experimental :obj:`~hypothesis.settings.backend` setting.
+
+.. _v6.104.1:
+
+--------------------
+6.104.1 - 2024-06-25
+--------------------
+
+Improves internal test coverage.
+
+.. _v6.104.0:
+
+--------------------
+6.104.0 - 2024-06-24
+--------------------
+
+This release adds strategies for Django's ``ModelChoiceField`` and
+``ModelMultipleChoiceField`` (:issue:`4010`).
+
+Thanks to Joshua Munn for this contribution.
+
+.. _v6.103.5:
+
+--------------------
+6.103.5 - 2024-06-24
+--------------------
+
+Fixes and reinstates full coverage of internal tests, which was accidentally
+disabled in :pull:`3935`.
+
+Closes :issue:`4003`.
+
+.. _v6.103.4:
+
+--------------------
+6.103.4 - 2024-06-24
+--------------------
+
+This release prevents a race condition inside internal cache implementation.
+
+.. _v6.103.3:
+
+--------------------
+6.103.3 - 2024-06-24
+--------------------
+
+This patch updates our vendored `list of top-level domains <https://www.iana.org/domains/root/db>`__,
+which is used by the provisional :func:`~hypothesis.provisional.domains` strategy.
+
+.. _v6.103.2:
+
+--------------------
+6.103.2 - 2024-06-14
+--------------------
+
+This patch improves our deduplication tracking across all strategies (:pull:`4007`). Hypothesis is now less likely to generate the same input twice.
+
+.. _v6.103.1:
+
+--------------------
+6.103.1 - 2024-06-05
+--------------------
+
+Account for time spent in garbage collection during tests, to avoid
+flaky ``DeadlineExceeded`` errors as seen in :issue:`3975`.
+
+Also fixes overcounting of stateful run times,
+a minor observability bug dating to :ref:`version 6.98.9 <v6.98.9>`
+(:pull:`3890`).
+
+.. _v6.103.0:
+
+--------------------
+6.103.0 - 2024-05-29
+--------------------
+
+This release migrates the shrinker to our new internal representation, called the IR layer (:pull:`3962`). This improves the shrinker's performance in the majority of cases. For example, on the Hypothesis test suite, shrinking is a median of 1.38x faster.
+
+It is possible this release regresses performance while shrinking certain strategies. If you encounter strategies which reliably shrink more slowly than they used to (or shrink slowly at all), please open an issue!
+
+You can read more about the IR layer at :issue:`3921`.
+
+.. _v6.102.6:
+
+--------------------
+6.102.6 - 2024-05-23
+--------------------
+
+This patch fixes one of our shrinking passes getting into a rare ``O(n)`` case instead of ``O(log(n))``.
+
+.. _v6.102.5:
+
+--------------------
+6.102.5 - 2024-05-22
+--------------------
+
+This patch fixes some introspection errors new in Python 3.11.9 and
+3.13.0b1, for the Ghostwriter and :func:`~hypothesis.strategies.from_type`.
+
+.. _v6.102.4:
+
+--------------------
+6.102.4 - 2024-05-15
+--------------------
+
+Internal developer documentation, no user-visible changes.
+
+.. _v6.102.3:
+
+--------------------
+6.102.3 - 2024-05-15
+--------------------
+
+This patch improves our shrinking of unique collections, such as  :func:`~hypothesis.strategies.dictionaries`,
+:func:`~hypothesis.strategies.sets`, and :func:`~hypothesis.strategies.lists` with ``unique=True``.
+
+.. _v6.102.2:
+
+--------------------
+6.102.2 - 2024-05-15
+--------------------
+
+This patch fixes a rare internal error when generating very large elements from strategies (:issue:`3874`).
+
+.. _v6.102.1:
+
+--------------------
+6.102.1 - 2024-05-13
+--------------------
+
+This patch fixes an overly strict internal type assertion.
+
+.. _v6.102.0:
+
+--------------------
+6.102.0 - 2024-05-13
+--------------------
+
+This release improves our support for the :pypi:`annotated-types` iterable
+``GroupedMetadata`` protocol.  In order to treat the elements "as if they
+had been unpacked", if one such element is a :class:`~hypothesis.strategies.SearchStrategy`
+we now resolve to that strategy.  Previously, we treated this as an unknown
+filter predicate.
+
+We expect this to be useful for libraries implementing custom metadata -
+instead of requiring downstream integration, they can implement the protocol
+and yield a lazily-created strategy.  Doing so only if Hypothesis is in
+:obj:`sys.modules` gives powerful integration with no runtime overhead
+or extra dependencies.
+
+.. _v6.101.0:
+
+--------------------
+6.101.0 - 2024-05-13
+--------------------
+
+The :func:`~hypothesis.extra.django.from_model` function currently
+tries to create a strategy for :obj:`~django:django.db.models.AutoField`
+fields if they don't have :attr:`~django:django.db.models.Field.auto_created`
+set to `True`.  The docs say it's supposed to skip all
+:obj:`~django:django.db.models.AutoField` fields, so this patch updates
+the code to do what the docs say (:issue:`3978`).
+
+.. _v6.100.8:
+
+--------------------
+6.100.8 - 2024-05-13
+--------------------
+
+This patch adds some internal type annotations (:issue:`3074`).
+Thanks to Andrew Sansom for his contribution!
+
+.. _v6.100.7:
+
+--------------------
+6.100.7 - 2024-05-12
+--------------------
+
+This patch fixes a rare internal error when using :func:`~hypothesis.strategies.integers` with a high ``max_examples`` setting (:issue:`3974`).
+
+.. _v6.100.6:
+
+--------------------
+6.100.6 - 2024-05-10
+--------------------
+
+This patch improves our internal caching logic. We don't expect it to result in any performance improvements (yet!).
+
+.. _v6.100.5:
+
+--------------------
+6.100.5 - 2024-05-06
+--------------------
+
+This patch turns off a check in :func:`~hypothesis.register_random` for possibly
+unreferenced RNG instances on the free-threaded build of CPython 3.13 because
+this check has a much higher false positive rate in the free-threaded build
+(:issue:`3965`).
+
+Thanks to Nathan Goldbaum for this patch.
+
+.. _v6.100.4:
+
+--------------------
+6.100.4 - 2024-05-05
+--------------------
+
+This patch turns off a warning for functions decorated with
+:func:`typing.overload` and then :func:`~hypothesis.strategies.composite`,
+although only in that order (:issue:`3970`).
+
+.. _v6.100.3:
+
+--------------------
+6.100.3 - 2024-05-04
+--------------------
+
+This patch fixes a significant slowdown when using the :func:`~hypothesis.stateful.precondition` decorator in some cases, due to expensive repr formatting internally (:issue:`3963`).
+
+.. _v6.100.2:
+
+--------------------
+6.100.2 - 2024-04-28
+--------------------
+
+Explicitly cast :obj:`numpy.finfo.smallest_normal` to builtin `float` in
+preparation for the :pypi:`numpy==2.0 <numpy>` release (:issue:`3950`)
+
+.. _v6.100.1:
+
+--------------------
+6.100.1 - 2024-04-08
+--------------------
+
+This patch improve a rare error message for flaky tests (:issue:`3940`).
+
+.. _v6.100.0:
+
+--------------------
+6.100.0 - 2024-03-31
+--------------------
+
+The :func:`~hypothesis.extra.numpy.from_dtype` function no longer generates
+``NaT`` ("not-a-time") values for the ``datetime64`` or ``timedelta64`` dtypes
+if passed ``allow_nan=False`` (:issue:`3943`).
+
+.. _v6.99.13:
+
+--------------------
+6.99.13 - 2024-03-24
+--------------------
+
+This patch includes the :obj:`~hypothesis.settings.backend` setting in the
+``how_generated`` field of our :doc:`observability output <observability>`.
+
+.. _v6.99.12:
+
+--------------------
+6.99.12 - 2024-03-23
+--------------------
+
+If you were running Python 3.13 (currently in alpha) with :pypi:`pytest-xdist`
+and then attempted to pretty-print a ``lambda`` functions which was created
+using the :func:`eval` builtin, it would have raised an AssertionError.
+Now you'll get ``"lambda ...: <unknown>"``, as expected.
+
+.. _v6.99.11:
+
+--------------------
+6.99.11 - 2024-03-20
+--------------------
+
+This release improves an internal invariant.
+
+.. _v6.99.10:
+
+--------------------
+6.99.10 - 2024-03-20
+--------------------
+
+This patch fixes Hypothesis sometimes raising a ``Flaky`` error when generating collections of unique floats containing ``nan``. See :issue:`3926` for more details.
+
+.. _v6.99.9:
+
+-------------------
+6.99.9 - 2024-03-19
+-------------------
+
+This patch continues our work on refactoring the shrinker (:issue:`3921`).
+
+.. _v6.99.8:
+
+-------------------
+6.99.8 - 2024-03-18
+-------------------
+
+This patch continues our work on refactoring shrinker internals (:issue:`3921`).
+
+.. _v6.99.7:
+
+-------------------
+6.99.7 - 2024-03-18
+-------------------
+
+This release resolves :py:exc:`PermissionError` that come from
+creating databases on inaccessible paths.
+
+.. _v6.99.6:
+
+-------------------
+6.99.6 - 2024-03-14
+-------------------
+
+This patch starts work on refactoring our shrinker internals. There is no user-visible change.
+
+.. _v6.99.5:
+
+-------------------
+6.99.5 - 2024-03-12
+-------------------
+
+This patch fixes a longstanding performance problem in stateful testing (:issue:`3618`),
+where state machines which generated a substantial amount of input for each step would
+hit the maximum amount of entropy and then fail with an ``Unsatisfiable`` error.
+
+We now stop taking additional steps when we're approaching the entropy limit,
+which neatly resolves the problem without touching unaffected tests.
+
+.. _v6.99.4:
+
+-------------------
+6.99.4 - 2024-03-11
+-------------------
+
+Fix regression caused by using :pep:`696` default in TypeVar with Python 3.13.0a3.
+
+.. _v6.99.3:
+
+-------------------
+6.99.3 - 2024-03-11
+-------------------
+
+This patch further improves the type annotations in :mod:`hypothesis.extra.numpy`.
+
+.. _v6.99.2:
+
+-------------------
+6.99.2 - 2024-03-10
+-------------------
+
+Simplify the type annotation of :func:`~hypothesis.extra.pandas.column` and
+:func:`~hypothesis.extra.pandas.columns` by using :pep:`696` to avoid overloading.
+
+.. _v6.99.1:
+
+-------------------
+6.99.1 - 2024-03-10
+-------------------
+
+This patch implements type annotations for :func:`~hypothesis.extra.pandas.column`.
+
+.. _v6.99.0:
+
+-------------------
+6.99.0 - 2024-03-09
+-------------------
+
+This release adds the **experimental and unstable** :obj:`~hypothesis.settings.backend`
+setting.  See :ref:`alternative-backends` for details.
+
+.. _v6.98.18:
+
+--------------------
+6.98.18 - 2024-03-09
+--------------------
+
+This patch fixes :issue:`3900`, a performance regression for
+:func:`~hypothesis.extra.numpy.arrays` due to the interaction of
+:ref:`v6.98.12` and :ref:`v6.97.1`.
+
+.. _v6.98.17:
+
+--------------------
+6.98.17 - 2024-03-04
+--------------------
+
+This patch improves the type annotations in :mod:`hypothesis.extra.numpy`,
+which makes inferred types more precise for both :pypi:`mypy` and
+:pypi:`pyright`, and fixes some strict-mode errors on the latter.
+
+Thanks to Jonathan Plasse for reporting and fixing this in :pull:`3889`!
+
+.. _v6.98.16:
+
+--------------------
+6.98.16 - 2024-03-04
+--------------------
+
+This patch paves the way for future shrinker improvements. There is no user-visible change.
+
+.. _v6.98.15:
+
+--------------------
+6.98.15 - 2024-02-29
+--------------------
+
+This release adds support for the Array API's `2023.12 release
+<https://data-apis.org/array-api/2023.12/>`_ via the ``api_version`` argument in
+:func:`~hypothesis.extra.array_api.make_strategies_namespace`. The API additions
+and modifications in the ``2023.12`` spec do not necessitate any changes in the
+Hypothesis strategies, hence there is no distinction between a ``2022.12`` and
+``2023.12`` strategies namespace.
+
+.. _v6.98.14:
+
+--------------------
+6.98.14 - 2024-02-29
+--------------------
+
+This patch adjusts the printing of bundle values to correspond
+with their names when using stateful testing.
+
+.. _v6.98.13:
+
+--------------------
+6.98.13 - 2024-02-27
+--------------------
+
+This patch implements filter-rewriting for :func:`~hypothesis.strategies.text`
+and :func:`~hypothesis.strategies.binary` with the :meth:`~re.Pattern.search`,
+:meth:`~re.Pattern.match`, or :meth:`~re.Pattern.fullmatch` method of a
+:func:`re.compile`\ d regex.
+
+.. _v6.98.12:
+
+--------------------
+6.98.12 - 2024-02-25
+--------------------
+
+This patch implements filter-rewriting for most length filters on some
+additional collection types (:issue:`3795`), and fixes several latent
+bugs where unsatisfiable or partially-infeasible rewrites could trigger
+internal errors.
+
+.. _v6.98.11:
+
+--------------------
+6.98.11 - 2024-02-24
+--------------------
+
+This patch makes stateful testing somewhat less likely to get stuck
+when there are only a few possible rules.
+
+.. _v6.98.10:
+
+--------------------
+6.98.10 - 2024-02-22
+--------------------
+
+This patch :pep:`adds a note <678>` to errors which occur while drawing from
+a strategy, to make it easier to tell why your test failed in such cases.
+
+.. _v6.98.9:
+
+-------------------
+6.98.9 - 2024-02-20
+-------------------
+
+This patch ensures that :doc:`observability <observability>` outputs include
+an informative repr for :class:`~hypothesis.stateful.RuleBasedStateMachine`
+stateful tests, along with more detailed timing information.
+
+.. _v6.98.8:
+
+-------------------
+6.98.8 - 2024-02-18
+-------------------
+
+This patch improves :doc:`the Ghostwriter <ghostwriter>` for binary operators.
+
+.. _v6.98.7:
+
+-------------------
+6.98.7 - 2024-02-18
+-------------------
+
+This patch improves import-detection in :doc:`the Ghostwriter <ghostwriter>`
+(:issue:`3884`), particularly for :func:`~hypothesis.strategies.from_type`
+and strategies from ``hypothesis.extra.*``.
+
+.. _v6.98.6:
+
+-------------------
+6.98.6 - 2024-02-15
+-------------------
+
+This patch clarifies the documentation on stateful testing (:issue:`3511`).
+
+.. _v6.98.5:
+
+-------------------
+6.98.5 - 2024-02-14
+-------------------
+
+This patch improves argument-to-json conversion for :doc:`observability <observability>`
+output.  Checking for a ``.to_json()`` method on the object *before* a few other
+options like dataclass support allows better user control of the process (:issue:`3880`).
+
+.. _v6.98.4:
+
+-------------------
+6.98.4 - 2024-02-12
+-------------------
+
+This patch updates our vendored `list of top-level domains <https://www.iana.org/domains/root/db>`__,
+which is used by the provisional :func:`~hypothesis.provisional.domains` strategy.
+
+.. _v6.98.3:
+
+-------------------
+6.98.3 - 2024-02-08
+-------------------
+
+This patch fixes an error when generating :doc:`observability <observability>` reports involving large (``n > 1e308``) integers.
+
+.. _v6.98.2:
+
+-------------------
+6.98.2 - 2024-02-05
+-------------------
+
+This patch refactors some internals. There is no user-visible change.
+
+.. _v6.98.1:
+
+-------------------
+6.98.1 - 2024-02-05
+-------------------
+
+This release improves our distribution of generated values for all strategies, by doing a better job of tracking which values we have generated before and avoiding generating them again.
+
+For example, ``st.lists(st.integers())`` previously generated ~5 each of ``[]`` ``[0]`` in 100 examples. In this release, each of ``[]`` and ``[0]`` are generated ~1-2 times each.
+
+.. _v6.98.0:
+
+-------------------
+6.98.0 - 2024-02-05
+-------------------
+
+This release deprecates use of the global random number generator while drawing
+from a strategy, because this makes test cases less diverse and prevents us
+from reporting minimal counterexamples (:issue:`3810`).
+
+If you see this new warning, you can get a quick fix by using
+:func:`~hypothesis.strategies.randoms`; or use more idiomatic strategies
+:func:`~hypothesis.strategies.sampled_from`, :func:`~hypothesis.strategies.floats`,
+:func:`~hypothesis.strategies.integers`, and so on.
+
+Note that the same problem applies to e.g. ``numpy.random``, but
+for performance reasons we only check the stdlib :mod:`random` module -
+ignoring even other sources passed to :func:`~hypothesis.register_random`.
+
+.. _v6.97.6:
+
+-------------------
+6.97.6 - 2024-02-04
+-------------------
+
+This patch updates our vendored `list of top-level domains <https://www.iana.org/domains/root/db>`__,
+which is used by the provisional :func:`~hypothesis.provisional.domains` strategy.
+
+.. _v6.97.5:
+
+-------------------
+6.97.5 - 2024-02-03
+-------------------
+
+This patch adds some :doc:`observability information <observability>`
+about how many times predicates in :func:`~hypothesis.assume` or
+:func:`~hypothesis.stateful.precondition` were satisfied, so that
+downstream tools can warn you if some were *never* satisfied by
+any test case.
+
+.. _v6.97.4:
+
+-------------------
+6.97.4 - 2024-01-31
+-------------------
+
+This patch improves formatting and adds some cross-references to our docs.
+
+.. _v6.97.3:
+
+-------------------
+6.97.3 - 2024-01-30
+-------------------
+
+Internal test refactoring.
+
+.. _v6.97.2:
+
+-------------------
+6.97.2 - 2024-01-30
+-------------------
+
+This patch slightly changes how we replay examples from
+:doc:`the database <database>`: if the behavior of the saved example has
+changed, we now keep running the test case instead of aborting at the size
+of the saved example.  While we know it's not the *same* example, we might
+as well continue running the test!
+
+Because we now finish running a few more examples for affected tests, this
+might be a slight slowdown - but correspondingly more likely to find a bug.
+
+We've also applied similar tricks to the :ref:`target phase <phases>`, where
+they are a pure performance improvement for affected tests.
+
+.. _v6.97.1:
+
+-------------------
+6.97.1 - 2024-01-27
+-------------------
+
+Improves the performance of the :func:`~hypothesis.extra.numpy.arrays`
+strategy when generating unique values.
+
+.. _v6.97.0:
+
+-------------------
+6.97.0 - 2024-01-25
+-------------------
+
+Changes the distribution of :func:`~hypothesis.strategies.sampled_from` when
+sampling from a :class:`~python:enum.Flag`. Previously, no-flags-set values would
+never be generated, and all-flags-set values would be unlikely for large enums.
+With this change, the distribution is more uniform in the number of flags set.
+
+.. _v6.96.4:
+
+-------------------
+6.96.4 - 2024-01-23
+-------------------
+
+This patch slightly refactors some internals. There is no user-visible change.
+
+.. _v6.96.3:
+
+-------------------
+6.96.3 - 2024-01-22
+-------------------
+
+This patch fixes a spurious warning about slow imports when ``HYPOTHESIS_EXPERIMENTAL_OBSERVABILITY`` was set.
+
+.. _v6.96.2:
+
+-------------------
+6.96.2 - 2024-01-21
+-------------------
+
+This patch refactors some more internals, continuing our work on supporting alternative backends (:issue:`3086`). There is no user-visible change.
+
+.. _v6.96.1:
+
+-------------------
+6.96.1 - 2024-01-18
+-------------------
+
+Fix a spurious warning seen when running pytest's test
+suite, caused by never realizing we got out of
+initialization due to imbalanced hook calls.
+
+.. _v6.96.0:
+
+-------------------
+6.96.0 - 2024-01-17
+-------------------
+
+Warns when constructing a `repr` that is overly long. This can
+happen by accident if stringifying arbitrary strategies, and
+is expensive in time and memory. The associated deferring of
+these long strings in :func:`~hypothesis.strategies.sampled_from`
+should also lead to improved performance.
+
+.. _v6.95.0:
+
+-------------------
+6.95.0 - 2024-01-17
+-------------------
+
+This release adds the ability to pass any object to :func:`~hypothesis.note`, instead of just strings. The pretty-printed representation of the object will be used.
+
+See also :issue:`3843`.
+
+.. _v6.94.0:
+
+-------------------
+6.94.0 - 2024-01-16
+-------------------
+
+This release avoids creating a ``.hypothesis`` directory when using
+:func:`~hypothesis.strategies.register_type_strategy` (:issue:`3836`),
+and adds warnings for plugins which do so by other means or have
+other unintended side-effects.
+
+.. _v6.93.2:
+
+-------------------
+6.93.2 - 2024-01-15
+-------------------
+
+This patch improves :doc:`observability <observability>` reports by moving
+timing information from ``metadata`` to a new ``timing`` key, and supporting
+conversion of additional argument types to json rather than string reprs
+via a ``.to_json()`` method (including e.g. Pandas dataframes).
+
+Additionally, the :obj:`~hypothesis.HealthCheck.too_slow` health check will
+now report *which* strategies were slow, e.g. for strategies a, b, c, ...::
+
+        count | fraction |    slowest draws (seconds)
+    a |    3  |     65%  |      --      --      --   0.357,  2.000
+    b |    8  |     16%  |   0.100,  0.100,  0.100,  0.111,  0.123
+    c |    3  |      8%  |      --      --   0.030,  0.050,  0.200
+    (skipped 2 rows of fast draws)
+
+.. _v6.93.1:
+
+-------------------
+6.93.1 - 2024-01-15
+-------------------
+
+This patch refactors some internals, continuing our work on supporting alternative backends
+(:issue:`3086`). There is no user-visible change.
+
+.. _v6.93.0:
+
+-------------------
+6.93.0 - 2024-01-13
+-------------------
+
+The :func:`~hypothesis.extra.lark.from_lark` strategy now accepts an ``alphabet=``
+argument, which is passed through to :func:`~hypothesis.strategies.from_regex`,
+so that you can e.g. constrain the generated strings to a particular codec.
+
+In support of this feature, :func:`~hypothesis.strategies.from_regex` will avoid
+generating optional parts which do not fit the alphabet.  For example,
+``from_regex(r"abc|def", alphabet="abcd")`` was previously an error, and will now
+generate only ``'abc'``.  Cases where there are no valid strings remain an error.
+
+.. _v6.92.9:
+
+-------------------
+6.92.9 - 2024-01-12
+-------------------
+
+This patch refactors some internals, continuing our work on supporting alternative backends (:issue:`3086`). There is no user-visible change.
+
+.. _v6.92.8:
+
+-------------------
+6.92.8 - 2024-01-11
+-------------------
+
+This patch adds a :ref:`test statistics <statistics>` event when a generated example is rejected via :func:`assume <hypothesis.assume>`.
+
+This may also help with distinguishing ``gave_up`` examples in :doc:`observability <observability>` (:issue:`3827`).
+
+.. _v6.92.7:
+
+-------------------
+6.92.7 - 2024-01-10
+-------------------
+
+This introduces the rewriting of length filters on some collection strategies (:issue:`3791`).
+
+Thanks to Reagan Lee for implementing this feature!
+
+.. _v6.92.6:
+
+-------------------
+6.92.6 - 2024-01-08
+-------------------
+
+If a test uses :func:`~hypothesis.strategies.sampled_from` on a sequence of
+strategies, and raises a ``TypeError``, we now :pep:`add a note <678>` asking
+whether you meant to use :func:`~hypothesis.strategies.one_of`.
+
+Thanks to Vince Reuter for suggesting and implementing this hint!
+
+.. _v6.92.5:
+
+-------------------
+6.92.5 - 2024-01-08
+-------------------
+
+This patch registers explicit strategies for a handful of builtin types,
+motivated by improved introspection in PyPy 7.3.14 triggering existing
+internal warnings.
+Thanks to Carl Friedrich Bolz-Tereick for helping us work out what changed!
+
+.. _v6.92.4:
+
+-------------------
+6.92.4 - 2024-01-08
+-------------------
+
+This patch fixes an error when writing :doc:`observability <observability>` reports without a pre-existing ``.hypothesis`` directory.
+
+.. _v6.92.3:
+
+-------------------
+6.92.3 - 2024-01-08
+-------------------
+
+This patch adds a new environment variable ``HYPOTHESIS_EXPERIMENTAL_OBSERVABILITY_NOCOVER``,
+which turns on :doc:`observability <observability>` data collection without collecting
+code coverage data, which may be faster on Python 3.11 and earlier.
+
+Thanks to Harrison Goldstein for reporting and fixing :issue:`3821`.
+
+.. _v6.92.2:
+
+-------------------
+6.92.2 - 2023-12-27
+-------------------
+
+This patch updates our vendored `list of top-level domains <https://www.iana.org/domains/root/db>`__,
+which is used by the provisional :func:`~hypothesis.provisional.domains` strategy.
+
+.. _v6.92.1:
+
+-------------------
+6.92.1 - 2023-12-16
+-------------------
+
+This patch fixes a bug introduced in :ref:`version 6.92.0 <v6.92.0>`,
+where using the :func:`~hypothesis.strategies.data` strategy would fail
+to draw a :func:`~python:dataclasses.dataclass` with a
+:class:`~python:collections.defaultdict` field.  This was due to a bug
+in the standard library which `was fixed in 3.12
+<https://github.com/python/cpython/pull/32056>`__, so we've vendored the fix.
+
+.. _v6.92.0:
+
+-------------------
+6.92.0 - 2023-12-10
+-------------------
+
+This release adds an experimental :wikipedia:`observability <Observability_(software)>`
+mode.  :doc:`You can read the docs about it here <observability>`.
+
+.. _v6.91.2:
+
+-------------------
+6.91.2 - 2023-12-10
+-------------------
+
+This patch refactors some more internals, continuing our work on supporting alternative backends (:issue:`3086`). There is no user-visible change.
+
+.. _v6.91.1:
+
+-------------------
+6.91.1 - 2023-12-08
+-------------------
+
+This patch fixes an issue where :func:`~hypothesis.strategies.builds` could not be used with :pypi:`attrs` objects that defined private attributes (i.e. attributes with a leading underscore). See also :issue:`3791`.
+
+This patch also adds support more generally for using :func:`~hypothesis.strategies.builds` with attrs' ``alias`` parameter, which was previously unsupported.
+
+This patch increases the minimum required version of attrs to 22.2.0.
+
+.. _v6.91.0:
+
+-------------------
+6.91.0 - 2023-11-27
+-------------------
+
+This release adds an optional ``payload`` argument to :func:`hypothesis.event`,
+so that you can clearly express the difference between the label and the value
+of an observation.  :ref:`statistics` will still summarize it as a string, but
+future observability options can preserve the distinction.
+
+.. _v6.90.1:
+
+-------------------
+6.90.1 - 2023-11-27
+-------------------
+
+This patch supports assigning ``settings = settings(...)`` as a class attribute
+on a subclass of a ``.TestCase`` attribute of a :class:`~hypothesis.stateful.RuleBasedStateMachine`.
+Previously, this did nothing at all.
+
+.. code-block: python
+
+    # works as of this release
+    class TestMyStatefulMachine(MyStatefulMachine.TestCase):
+        settings = settings(max_examples=10000)
+
+    # the old way still works, but it's more verbose.
+    MyStateMachine.TestCase.settings = settings(max_examples=10000)
+    class TestMyStatefulMachine(MyStatefulMachine.TestCase):
+        pass
+
+Thanks to Joey Tran for reporting these settings-related edge cases in stateful testing.
+
+.. _v6.90.0:
+
+-------------------
+6.90.0 - 2023-11-20
+-------------------
+
+This release makes it an error to assign ``settings = settings(...)``
+as a class attribute on a :class:`~hypothesis.stateful.RuleBasedStateMachine`.
+This has never had any effect, and it should be used as a decorator instead:
+
+.. code-block: python
+
+    class BadMachine(RuleBasedStateMachine):
+        """This doesn't do anything, and is now an error!"""
+        settings = settings(derandomize=True)
+
+    @settings(derandomize=True)
+    class GoodMachine(RuleBasedStateMachine):
+        """This is the right way to do it :-)"""
+
+.. _v6.89.1:
+
+-------------------
+6.89.1 - 2023-11-19
+-------------------
+
+This patch refactors some internals.  There is no user-visible change,
+but we hope to improve performance and unlock support for alternative
+backends such as :pypi:`symbolic execution with crosshair <crosshair-tool>`
+in future (:issue:`3086`).
+
+Thanks to Liam DeVoe for this fantastic contribution!
+
+.. _v6.89.0:
+
+-------------------
+6.89.0 - 2023-11-16
+-------------------
+
+This release teaches :func:`~hypothesis.strategies.from_type` to handle constraints
+implied by the :pypi:`annotated-types` package - as used by e.g. :pypi:`pydantic`.
+This is usually efficient, but falls back to filtering in a few remaining cases.
+
+Thanks to Viicos for :pull:`3780`!
+
+.. _v6.88.4:
+
+-------------------
+6.88.4 - 2023-11-13
+-------------------
+
+This patch adds a warning when :func:`@st.composite <hypothesis.strategies.composite>`
+wraps a function annotated as returning a :class:`~hypothesis.strategies.SearchStrategy`,
+since this is usually an error (:issue:`3786`).  The function should return a value,
+and the decorator will convert it to a function which returns a strategy.
+
+.. _v6.88.3:
+
+-------------------
+6.88.3 - 2023-11-05
+-------------------
+
+This patch refactors ``from_type(typing.Tuple)``, allowing
+:func:`~hypothesis.strategies.register_type_strategy` to take effect
+for tuples instead of being silently ignored (:issue:`3750`).
+
+Thanks to Nick Collins for reporting and extensive work on this issue.
+
+.. _v6.88.2:
+
+-------------------
+6.88.2 - 2023-11-05
+-------------------
+
+This patch improves the speed of the explain phase on python 3.12+, by using the new
+:mod:`sys.monitoring` module to collect coverage, instead of :obj:`sys.settrace`.
+
+Thanks to Liam DeVoe for :pull:`3776`!
+
+.. _v6.88.1:
+
+-------------------
+6.88.1 - 2023-10-16
+-------------------
+
+This patch improves :func:`~hypothesis.strategies.register_type_strategy` when used with ``tuple`` subclasses,
+by preventing them from being interpreted as generic and provided to strategies like ``st.from_type(Sequence[int])``
+(:issue:`3767`).
+
+.. _v6.88.0:
+
+-------------------
+6.88.0 - 2023-10-15
+-------------------
+
+This release allows strategy-generating functions registered with
+:func:`~hypothesis.strategies.register_type_strategy` to conditionally not
+return a strategy, by returning :data:`NotImplemented` (:issue:`3767`).
+
+.. _v6.87.4:
+
+-------------------
+6.87.4 - 2023-10-12
+-------------------
+
+When :func:`~hypothesis.strategies.randoms` was called with ``use_true_randoms=False``,
+calling ``r.sample([], 0)`` would result in an error,
+when it should have returned an empty sequence to agree with the normal behaviour of
+:func:`random.sample`. This fixes that discrepancy (:issue:`3765`).
+
+.. _v6.87.3:
+
+-------------------
+6.87.3 - 2023-10-06
+-------------------
+
+This patch ensures that the :ref:`hypothesis codemod <codemods>` CLI
+will print a warning instead of stopping with an internal error if
+one of your files contains invalid syntax (:issue:`3759`).
+
+.. _v6.87.2:
+
+-------------------
+6.87.2 - 2023-10-06
+-------------------
+
+This patch makes some small changes to our NumPy integration to ensure forward
+compatibility.  Thanks to Mateusz Sokół for :pull:`3761`.
+
+.. _v6.87.1:
+
+-------------------
+6.87.1 - 2023-10-01
+-------------------
+
+Fixes :issue:`3755`, where an internal condition turns out
+to be reachable after all.
+
+.. _v6.87.0:
+
+-------------------
+6.87.0 - 2023-09-25
+-------------------
+
+This release deprecates use of :func:`~hypothesis.assume` and ``reject()``
+outside of property-based tests, because these functions work by raising a
+special exception (:issue:`3743`).  It also fixes some type annotations
+(:issue:`3753`).
+
+.. _v6.86.2:
+
+-------------------
+6.86.2 - 2023-09-18
+-------------------
+
+Hotfix for :issue:`3747`, a bug in explain mode which is so rare that
+we missed it in six months of dogfooding.  Thanks to :pypi:`mygrad`
+for discovering and promptly reporting this!
+
+.. _v6.86.1:
+
+-------------------
+6.86.1 - 2023-09-17
+-------------------
+
+This patch improves the documentation of :obj:`@example(...).xfail() <hypothesis.example.xfail>`
+by adding a note about :pep:`614`, similar to :obj:`@example(...).via() <hypothesis.example.via>`,
+and adds a warning when a strategy generates a test case which seems identical to
+one provided by an xfailed example.
+
+.. _v6.86.0:
+
+-------------------
+6.86.0 - 2023-09-17
+-------------------
+
+This release enables the :obj:`~hypothesis.Phase.explain` :ref:`phase <phases>`
+by default.  We hope it helps you to understand *why* your failing tests have
+failed!
+
+.. _v6.85.1:
+
+-------------------
+6.85.1 - 2023-09-16
+-------------------
+
+This patch switches some of our type annotations to use :obj:`typing.Literal`
+when only a few specific values are allowed, such as UUID or IP address versions.
+
+.. _v6.85.0:
+
+-------------------
+6.85.0 - 2023-09-16
+-------------------
+
+This release deprecates the old whitelist/blacklist arguments
+to :func:`~hypothesis.strategies.characters`, in favor of
+include/exclude arguments which more clearly describe their
+effects on the set of characters which can be generated.
+
+You can :ref:`use Hypothesis' codemods <codemods>` to automatically
+upgrade to the new argument names.  In a future version, the old
+names will start to raise a ``DeprecationWarning``.
+
+.. _v6.84.3:
+
+-------------------
+6.84.3 - 2023-09-10
+-------------------
+
+This patch automatically disables the :obj:`~hypothesis.HealthCheck.differing_executors`
+health check for methods which are also pytest parametrized tests, because
+those were mostly false alarms (:issue:`3733`).
+
+.. _v6.84.2:
+
+-------------------
+6.84.2 - 2023-09-06
+-------------------
+
+Building on recent releases, :func:`~hypothesis.strategies.characters`
+now accepts _any_ ``codec=``, not just ``"utf-8"`` and ``"ascii"``.
+
+This includes standard codecs from the :mod:`codecs` module and their
+aliases, platform specific and user-registered codecs if they are
+available, and `python-specific text encodings
+<https://docs.python.org/3/library/codecs.html#python-specific-encodings>`__
+(but not text transforms or binary transforms).
+
+.. _v6.84.1:
+
+-------------------
+6.84.1 - 2023-09-05
+-------------------
+
+This patch by Reagan Lee makes ``st.text(...).filter(str.isidentifier)``
+return an efficient custom strategy (:issue:`3480`).
+
+.. _v6.84.0:
+
+-------------------
+6.84.0 - 2023-09-04
+-------------------
+
+The :func:`~hypothesis.strategies.from_regex` strategy now takes an optional
+``alphabet=characters(codec="utf-8")`` argument for unicode strings, like
+:func:`~hypothesis.strategies.text`.
+
+This offers more and more-consistent control over the generated strings,
+removing previously-hard-coded limitations.  With ``fullmatch=False`` and
+``alphabet=characters()``, surrogate characters are now possible in leading
+and trailing text as well as the body of the match.  Negated character classes
+such as ``[^A-Z]`` or ``\S`` had a hard-coded exclusion of control characters
+and surrogate characters; now they permit anything in ``alphabet=`` consistent
+with the class, and control characters are permitted by default.
+
+.. _v6.83.2:
+
+-------------------
+6.83.2 - 2023-09-04
+-------------------
+
+Add a health check that detects if the same test is executed
+several times by :ref:`different executors<custom-function-execution>`.
+This can lead to difficult-to-debug problems such as :issue:`3446`.
+
+.. _v6.83.1:
+
+-------------------
+6.83.1 - 2023-09-03
+-------------------
+
+Pretty-printing of failing examples can now use functions registered with
+:func:`IPython.lib.pretty.for_type` or :func:`~IPython.lib.pretty.for_type_by_name`,
+as well as restoring compatibility with ``_repr_pretty_`` callback methods
+which were accidentally broken in :ref:`version 6.61.2 <v6.61.2>` (:issue:`3721`).
+
 .. _v6.83.0:
 
 -------------------
@@ -123,7 +2141,7 @@ help narrow down any particularly weird bugs in complex environments.
 -------------------
 
 Fixes some lingering issues with inference of recursive types
-in `~hypothesis.strategies.from_type`. Closes :issue:`3525`.
+in :func:`~hypothesis.strategies.from_type`. Closes :issue:`3525`.
 
 .. _v6.81.0:
 
@@ -136,7 +2154,7 @@ This release further improves our ``.patch``-file support from
 :func:`~hypothesis.strategies.data` (and don't support
 :obj:`@example() <hypothesis.example>`\ ), and various broken edge-cases.
 
-Because :pypi:`libCST` has released version 1.0 which uses the native parser
+Because :pypi:`libCST <libcst>` has released version 1.0 which uses the native parser
 by default, we no longer set the ``LIBCST_PARSER_TYPE=native`` environment
 variable.  If you are using an older version, you may need to upgrade or
 set this envvar for yourself.
@@ -314,8 +2332,8 @@ is strongly recommended.  You can ensure you have the dependencies with
 -------------------
 
 This patch continues the work started in :pull:`3651` by adding
-:pypi:`ruff` linter rules for pyflakes, flake8-comprehensions, and
-flake8-implicit-str-concat.
+:pypi:`ruff` linter rules for :pypi:`pyflakes`, :pypi:`flake8-comprehensions`,
+and :pypi:`flake8-implicit-str-concat`.
 
 .. _v6.75.5:
 
@@ -377,7 +2395,7 @@ Our Pytest plugin now writes ``.patch`` files to insert them for you, making
 `this workflow <https://blog.nelhage.com/post/property-testing-like-afl/>`__
 easier than ever before.
 
-Note that you'll need :pypi:`LibCST` (via :ref:`codemods`), and that
+Note that you'll need :pypi:`LibCST <libcst>` (via :ref:`codemods`), and that
 :obj:`@example().via() <hypothesis.example.via>` requires :pep:`614`
 (Python 3.9 or later).
 
@@ -1098,7 +3116,7 @@ This release allows :func:`~hypothesis.extra.numpy.from_dtype` to generate
 Unicode strings which cannot be encoded in UTF-8, but are valid in Numpy
 arrays (which use UTF-32).
 
-This logic will only be used with :pypi:`Numpy` >= 1.19, because earlier
+This logic will only be used with :pypi:`numpy` >= 1.19, because earlier
 versions have `an issue <https://github.com/numpy/numpy/issues/15363>`__
 which led us to revert :ref:`Hypothesis 5.2 <v5.2.0>` last time!
 
@@ -1119,7 +3137,7 @@ This patch fixes some inconsistency between argument handling for
 -------------------
 
 This release uses :pep:`612` :obj:`python:typing.ParamSpec` (or the
-:pypi:`typing_extensions` backport) to express the first-argument-removing
+:pypi:`typing-extensions` backport) to express the first-argument-removing
 behaviour of :func:`@st.composite <hypothesis.strategies.composite>`
 and signature-preservation of :func:`~hypothesis.strategies.functions`
 to IDEs, editor plugins, and static type checkers such as :pypi:`mypy`.
@@ -1163,7 +3181,7 @@ is really annoying.  See :issue:`2701` for details.
 6.48.0 - 2022-06-27
 -------------------
 
-This release raises :class:`~unittest.SkipTest` for which never executed any
+This release raises :class:`~unittest.SkipTest` for tests which never executed any
 examples, for example because the :obj:`~hypothesis.settings.phases` setting
 excluded the :obj:`~hypothesis.Phase.explicit`, :obj:`~hypothesis.Phase.reuse`,
 and :obj:`~hypothesis.Phase.generate` phases.  This helps to avoid cases where
@@ -1446,7 +3464,7 @@ Fixed a type annotation for ``pyright --strict`` (:issue:`3287`).
 
 This patch makes it an explicit error to call
 :func:`~hypothesis.strategies.register_type_strategy` with a
-`Pydantic GenericModel <https://pydantic-docs.helpmanual.io/usage/models/#generic-models>`__
+`Pydantic GenericModel <https://docs.pydantic.dev/latest/concepts/models/#generic-models>`__
 and a callable, because ``GenericModel`` isn't actually a generic type at
 runtime and so you have to register each of the "parametrized versions"
 (actually subclasses!) manually.  See :issue:`2940` for more details.
@@ -2031,7 +4049,7 @@ Did you know that of the 2\ :superscript:`64` possible floating-point numbers,
 
 While nans *usually* have all zeros in the sign bit and mantissa, this
 `isn't always true <https://wingolog.org/archives/2011/05/18/value-representation-in-javascript-implementations>`__,
-and :wikipedia:`'signaling' nans might trap or error <https://en.wikipedia.org/wiki/NaN#Signaling_NaN>`.
+and :wikipedia:`'signaling' nans might trap or error <NaN#Signaling_NaN>`.
 To help distinguish such errors in e.g. CI logs, Hypothesis now prints ``-nan`` for
 negative nans, and adds a comment like ``# Saw 3 signaling NaNs`` if applicable.
 
@@ -2694,7 +4712,7 @@ allowing it to be conveniently used inline in expressions such as
 This patch fixes a deprecation warning if you're using recent versions
 of :pypi:`importlib-metadata` (:issue:`2934`), which we use to load
 :ref:`third-party plugins <entry-points>` such as `Pydantic's integration
-<https://pydantic-docs.helpmanual.io/hypothesis_plugin/>`__.
+<https://docs.pydantic.dev/latest/hypothesis_plugin/>`__.
 On older versions of :pypi:`importlib-metadata`, there is no change and
 you don't need to upgrade.
 
@@ -2942,7 +4960,7 @@ Thanks to Nikita Sobolev for fixing :issue:`2884`!
 ------------------
 
 This patch fixes an exception that occurs when using type unions of
-the :pypi:`typing_extensions` ``Literal`` backport on Python 3.6.
+the :pypi:`typing-extensions` ``Literal`` backport on Python 3.6.
 
 Thanks to Ben Anhalt for identifying and fixing this bug.
 
@@ -3013,7 +5031,7 @@ If the plugin detects an earlier version of pytest, it will automatically
 deactivate itself.
 
 `(4.6.x is the earliest pytest branch that still accepts community bugfixes.)
-<https://docs.pytest.org/en/stable/py27-py34-deprecation.html>`__
+<https://docs.pytest.org/en/6.2.x/py27-py34-deprecation.html>`__
 
 Hypothesis-based tests should continue to work in earlier versions of
 pytest, but enhanced integrations provided by the plugin
@@ -3217,7 +5235,7 @@ Hypothesis APIs (:issue:`2705`).
 -------------------
 
 This patch fixes :func:`~hypothesis.strategies.from_type` with
-the :pypi:`typing_extensions` ``Literal`` backport on Python 3.6.
+the :pypi:`typing-extensions` ``Literal`` backport on Python 3.6.
 
 .. _v5.43.9:
 
@@ -3397,7 +5415,7 @@ trigger an internal error when casefolding a character creates a longer string
 
 This patch adds a final fallback clause to :ref:`our plugin logic <entry-points>`
 to fail with a warning rather than error on Python < 3.8 when neither the
-:pypi:`importlib_metadata` (preferred) or :pypi:`setuptools` (fallback)
+:pypi:`importlib-metadata` (preferred) or :pypi:`setuptools` (fallback)
 packages are available.
 
 .. _v5.41.2:
@@ -3547,8 +5565,8 @@ is callable, we call it after importing it.  You can still use non-callable
 entry points (like modules), which are only imported.
 
 We also prefer `importlib.metadata <https://docs.python.org/3/library/importlib.metadata.html>`__
-or :pypi:`the backport <importlib_metadata>` over `pkg_resources
-<https://setuptools.readthedocs.io/en/latest/pkg_resources.html>`__,
+or :pypi:`the backport <importlib-metadata>` over `pkg_resources
+<https://setuptools.pypa.io/en/latest/pkg_resources.html>`__,
 which makes ``import hypothesis`` around 200 milliseconds faster
 (:issue:`2571`).
 
@@ -3716,7 +5734,7 @@ If argument names varied between the ``__annotations__`` and ``__signature__``,
 they would not be supplied to the target.
 
 This was particularly an issue for :pypi:`pydantic` models which use an
-`alias generator <https://pydantic-docs.helpmanual.io/usage/model_config/#alias-generator>`__.
+`alias generator <https://docs.pydantic.dev/latest/api/config/#pydantic.alias_generators>`__.
 
 .. _v5.30.1:
 
@@ -4212,7 +6230,7 @@ To report only the first failure, you can use the :obj:`report_multiple_bugs=Fal
 -------------------
 
 This patch adds strategy inference for the ``Literal``, ``NewType``, ``Type``,
-``DefaultDict``, and ``TypedDict`` types from the :pypi:`typing_extensions`
+``DefaultDict``, and ``TypedDict`` types from the :pypi:`typing-extensions`
 backport on PyPI.
 
 .. _v5.16.3:
@@ -4366,7 +6384,7 @@ following test no longer fails with ``UnsatisfiedAssumption`` (:issue:`2125`):
 5.10.5 - 2020-05-04
 -------------------
 
-If you have :pypi:`django` installed but don't use it, this patch will make
+If you have :pypi:`Django` installed but don't use it, this patch will make
 ``import hypothesis`` a few hundred milliseconds faster (e.g. 0.704s -> 0.271s).
 
 Thanks to :pypi:`importtime-waterfall` for highlighting this problem and
@@ -4381,7 +6399,7 @@ the solution - it's impossible to misuse code from a module you haven't imported
 
 This patch improves the internals of :func:`~hypothesis.strategies.builds` type
 inference, to handle recursive forward references in certain dataclasses.
-This is useful for e.g. :pypi:`hypothesmith`'s forthcoming :pypi:`LibCST` mode.
+This is useful for e.g. :pypi:`hypothesmith`'s forthcoming :pypi:`LibCST <libcst>` mode.
 
 .. _v5.10.3:
 
@@ -4496,8 +6514,8 @@ This release fixes :issue:`2395`, where under some circumstances targeted proper
 This patch teaches :func:`~hypothesis.strategies.builds` and
 :func:`~hypothesis.strategies.from_type` to use the ``__signature__``
 attribute of classes where it has been set, improving our support
-for :pypi:`Pydantic` models (`in pydantic >= 1.5
-<https://github.com/samuelcolvin/pydantic/pull/1034>`__).
+for :pypi:`pydantic` models (`in pydantic >= 1.5
+<https://github.com/pydantic/pydantic/pull/1034>`__).
 
 .. _v5.8.2:
 
@@ -4758,8 +6776,8 @@ types can actually be hashed.
 5.1.5 - 2020-01-12
 ------------------
 
-This patch fixes an internal error when running in an :pypi:`IPython` repl or
-:pypi:`Jupyter` notebook on Windows (:issue:`2319`), and an internal error on
+This patch fixes an internal error when running in an :pypi:`ipython` repl or
+:pypi:`jupyter` notebook on Windows (:issue:`2319`), and an internal error on
 Python 3.5.1 (:issue:`2318`).
 
 .. _v5.1.4:
@@ -4855,7 +6873,7 @@ Hypothesis deprecation warnings*, this will be a very boring upgrade.
 .. note::
     This release drops support for Python 2, which has passed
     `its end of life date <https://devguide.python.org/#status-of-python-branches>`__.
-    The `Python 3 Statement <https://python3statement.org/>`__ outlines our
+    The `Python 3 Statement <https://python3statement.github.io>`__ outlines our
     reasons, and lists many other packages that have made the same decision.
 
     ``pip install hypothesis`` should continue to give you the latest compatible version.
@@ -5824,7 +7842,7 @@ is not a strategy, Hypothesis now tells you which one.
 -------------------
 
 This release adds the :func:`~hypothesis.extra.numpy.basic_indices` strategy,
-to generate `basic indexes <https://numpy.org/doc/stable/reference/arrays.indexing.html>`__
+to generate `basic indexes <https://numpy.org/doc/stable/user/basics.indexing.html>`__
 for arrays of the specified shape (:issue:`1930`).
 
 It generates tuples containing some mix of integers, :obj:`python:slice` objects,
@@ -5965,7 +7983,7 @@ in Python code, which can be generated with the :pypi:`hypothesmith` package.
 The :func:`~hypothesis.strategies.from_type` strategy now knows to look up
 the subclasses of abstract types, which cannot be instantiated directly.
 
-This is very useful for :pypi:`hypothesmith` to support :pypi:`libCST`.
+This is very useful for :pypi:`hypothesmith` to support :pypi:`libCST <libcst>`.
 
 .. _v4.33.1:
 
@@ -6083,7 +8101,7 @@ at the SciPy 2019 sprints!
 
 This patch improves the behaviour of the :func:`~hypothesis.strategies.text`
 strategy when passed an ``alphabet`` which is not a strategy.  The value is
-now interpreted as ``whitelist_characters`` to :func:`~hypothesis.strategies.characters`
+now interpreted as ``include_characters`` to :func:`~hypothesis.strategies.characters`
 instead of a sequence for :func:`~hypothesis.strategies.sampled_from`, which
 standardises the distribution of examples and the shrinking behaviour.
 
@@ -6230,7 +8248,7 @@ This patch fixes :issue:`2014`, where our compatibility layer broke with version
 3.7.4 of the :pypi:`typing` module backport on PyPI.
 
 This issue only affects Python 2.  We remind users that Hypothesis, like many other
-packages, `will drop Python 2 support on 2020-01-01 <https://python3statement.org>`__
+packages, `will drop Python 2 support on 2020-01-01 <https://python3statement.github.io>`__
 and already has several features that are only available on Python 3.
 
 .. _v4.24.3:
@@ -6679,7 +8697,7 @@ This release makes it an explicit error to call
 as there are no possible values that can be generated (:issue:`1859`).
 
 :func:`floats(min_value=0.0, max_value=-0.0) <hypothesis.strategies.floats>`
-is now deprecated.  While `0. == -0.` and we could thus generate either if
+is now deprecated.  While ``0. == -0.`` and we could thus generate either if
 comparing by value, violating the sequence ordering of floats is a special
 case we don't want or need.
 
@@ -7011,7 +9029,7 @@ one.  These shapes are rare and have some odd behavior, but are particularly
 important to test for just that reason!
 
 In a related bigfix, :func:`~hypothesis.extra.numpy.arrays` now supports generating
-zero-dimensional arrays with `dtype=object` and a strategy for iterable elements.
+zero-dimensional arrays with ``dtype=object`` and a strategy for iterable elements.
 Previously, the array element would incorrectly be set to the first item in the
 generated iterable.
 
@@ -7476,7 +9494,7 @@ This release has no user visible changes but updates our URLs to use HTTPS.
 -------------------
 
 Hypothesis can now automatically generate values for Django models with a
-`URLfield`, thanks to a new provisional strategy for URLs (:issue:`1388`).
+`~django.db.models.URLField`, thanks to a new provisional strategy for URLs (:issue:`1388`).
 
 .. _v3.86.6:
 
@@ -7682,7 +9700,7 @@ with whatever arguments you prefer.
 3.83.2 - 2018-12-17
 -------------------
 
-Hypothesis has adopted :pypi:`Black` as our code formatter (:issue:`1686`).
+Hypothesis has adopted :pypi:`black` as our code formatter (:issue:`1686`).
 There are no functional changes to the source, but it's prettier!
 
 .. _v3.83.1:
@@ -7782,7 +9800,7 @@ Thanks to ccxcz for reporting :issue:`1656`.
 -------------------
 
 The ``alphabet`` argument for :func:`~hypothesis.strategies.text` now
-uses its default value of ``characters(blacklist_categories=('Cs',))``
+uses its default value of ``characters(exclude_categories=('Cs',))``
 directly, instead of hiding that behind ``alphabet=None`` and replacing
 it within the function.  Passing ``None`` is therefore deprecated.
 
@@ -10118,7 +12136,7 @@ behaviour for Hypothesis's strategies.
 -------------------
 
 This release improves the performance of
-:func:`~hypothesis.strategies.characters` when using ``blacklist_characters``
+:func:`~hypothesis.strategies.characters` when using ``exclude_characters``
 and :func:`~hypothesis.strategies.from_regex` when using negative character
 classes.
 
@@ -11059,7 +13077,7 @@ as well.
 -------------------
 
 This release fixes a bug introduced in :ref:`3.18.0 <v3.18.0>`. If the arguments
-``whitelist_characters`` and ``blacklist_characters`` to
+``include_characters`` and ``exclude_characters`` to
 :func:`~hypothesis.strategies.characters` contained overlapping elements, then an
 ``InvalidArgument`` exception would be raised.
 
@@ -11085,7 +13103,7 @@ if it was :func:`~hypothesis.strategies.just`).
 This is a feature release:
 
 * :func:`~hypothesis.strategies.characters` now accepts
-  ``whitelist_characters``, particular characters which will be added to those
+  ``include_characters``, particular characters which will be added to those
   it produces. (:issue:`668`)
 * A bug fix for the internal function ``_union_interval_lists()``, and a rename
   to ``_union_intervals()``. It now correctly handles all cases where intervals

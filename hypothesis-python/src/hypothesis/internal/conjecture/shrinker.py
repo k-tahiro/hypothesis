@@ -8,36 +8,57 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import math
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Callable, Optional, TypeVar, Union
 
 import attr
 
-from hypothesis.internal.compat import int_from_bytes, int_to_bytes
-from hypothesis.internal.conjecture.choicetree import (
+from hypothesis.internal.conjecture.choice import (
+    choice_equal,
+    choice_from_index,
+    choice_key,
+    choice_permitted,
+    choice_to_index,
+)
+from hypothesis.internal.conjecture.data import (
+    ConjectureData,
+    ConjectureResult,
+    IRNode,
+    Status,
+    draw_choice,
+    ir_size,
+)
+from hypothesis.internal.conjecture.junkdrawer import (
+    endswith,
+    find_integer,
+    replace_all,
+    startswith,
+)
+from hypothesis.internal.conjecture.shrinking import (
+    Bytes,
+    Float,
+    Integer,
+    Ordering,
+    String,
+)
+from hypothesis.internal.conjecture.shrinking.choicetree import (
     ChoiceTree,
     prefix_selection_order,
     random_selection_order,
 )
-from hypothesis.internal.conjecture.data import ConjectureData, ConjectureResult, Status
-from hypothesis.internal.conjecture.floats import (
-    DRAW_FLOAT_LABEL,
-    float_to_lex,
-    lex_to_float,
-)
-from hypothesis.internal.conjecture.junkdrawer import (
-    binary_search,
-    find_integer,
-    replace_all,
-)
-from hypothesis.internal.conjecture.shrinking import Float, Integer, Lexical, Ordering
-from hypothesis.internal.conjecture.shrinking.learned_dfas import SHRINKING_DFAS
+from hypothesis.internal.floats import MAX_PRECISE_INTEGER
 
 if TYPE_CHECKING:
+    from random import Random
+
     from hypothesis.internal.conjecture.engine import ConjectureRunner
 
+SortKeyT = TypeVar("SortKeyT", str, bytes)
 
-def sort_key(buffer):
+
+def sort_key(buffer: SortKeyT) -> tuple[int, SortKeyT]:
     """Returns a sort key such that "simpler" buffers are smaller than
     "more complicated" ones.
 
@@ -60,10 +81,17 @@ def sort_key(buffer):
        result, so it makes sense to prioritise reducing earlier values over
        later ones. This makes the lexicographic order the more natural choice.
     """
-    return (len(buffer), buffer)
+    return (len(buffer), buffer)  # pragma: no cover # removing soon
 
 
-SHRINK_PASS_DEFINITIONS: Dict[str, "ShrinkPassDefinition"] = {}
+def sort_key_ir(nodes: Sequence[IRNode]) -> tuple[int, tuple[int, ...]]:
+    return (
+        len(nodes),
+        tuple(choice_to_index(node.value, node.kwargs) for node in nodes),
+    )
+
+
+SHRINK_PASS_DEFINITIONS: dict[str, "ShrinkPassDefinition"] = {}
 
 
 @attr.s()
@@ -244,7 +272,7 @@ class Shrinker:
 
     """
 
-    def derived_value(fn):  # noqa: B902
+    def derived_value(fn):
         """It's useful during shrinking to have access to derived values of
         the current shrink target.
 
@@ -261,7 +289,18 @@ class Shrinker:
         accept.__name__ = fn.__name__
         return property(accept)
 
-    def __init__(self, engine, initial, predicate, allow_transition, explain):
+    def __init__(
+        self,
+        engine: "ConjectureRunner",
+        initial: Union[ConjectureData, ConjectureResult],
+        predicate: Optional[Callable[[ConjectureData], bool]],
+        *,
+        allow_transition: Optional[
+            Callable[[Union[ConjectureData, ConjectureResult], ConjectureData], bool]
+        ],
+        explain: bool,
+        in_target_phase: bool = False,
+    ):
         """Create a shrinker for a particular engine, with a given starting
         point and predicate. When shrink() is called it will attempt to find an
         example for which predicate is True and which is strictly smaller than
@@ -271,17 +310,17 @@ class Shrinker:
         takes ConjectureData objects.
         """
         assert predicate is not None or allow_transition is not None
-        self.engine: "ConjectureRunner" = engine
+        self.engine = engine
         self.__predicate = predicate or (lambda data: True)
         self.__allow_transition = allow_transition or (lambda source, destination: True)
-        self.__derived_values = {}
+        self.__derived_values: dict = {}
         self.__pending_shrink_explanation = None
 
-        self.initial_size = len(initial.buffer)
+        self.initial_size = len(initial.choices)
 
         # We keep track of the current best example on the shrink_target
         # attribute.
-        self.shrink_target: ConjectureData = initial
+        self.shrink_target = initial
         self.clear_change_tracking()
         self.shrinks = 0
 
@@ -291,15 +330,19 @@ class Shrinker:
         # it's time to stop shrinking.
         self.max_stall = 200
         self.initial_calls = self.engine.call_count
+        self.initial_misaligned = self.engine.misaligned_count
         self.calls_at_last_shrink = self.initial_calls
 
-        self.passes_by_name = {}
-        self.passes = []
+        self.passes_by_name: dict[str, ShrinkPass] = {}
 
-        # Extra DFAs that may be installed. This is used solely for
-        # testing and learning purposes.
-        self.extra_dfas = {}
+        # Because the shrinker is also used to `pareto_optimise` in the target phase,
+        # we sometimes want to allow extending buffers instead of aborting at the end.
+        if in_target_phase:
+            from hypothesis.internal.conjecture.engine import BUFFER_SIZE
 
+            self.__extend = BUFFER_SIZE
+        else:
+            self.__extend = 0
         self.should_explain = explain
 
     @derived_value  # type: ignore
@@ -308,7 +351,7 @@ class Shrinker:
 
     def cached(self, *keys):
         def accept(f):
-            cache_key = (f.__name__,) + keys
+            cache_key = (f.__name__, *keys)
             try:
                 return self.cached_calculations[cache_key]
             except KeyError:
@@ -324,9 +367,8 @@ class Shrinker:
         p = ShrinkPass(
             run_with_chooser=definition.run_with_chooser,
             shrinker=self,
-            index=len(self.passes),
+            index=len(self.passes_by_name),
         )
-        self.passes.append(p)
         self.passes_by_name[p.name] = p
         return p
 
@@ -338,37 +380,48 @@ class Shrinker:
             self.add_new_pass(name)
         return self.passes_by_name[name]
 
-    @derived_value  # type: ignore
-    def match_cache(self):
-        return {}
-
-    def matching_regions(self, dfa):
-        """Returns all pairs (u, v) such that self.buffer[u:v] is accepted
-        by this DFA."""
-
-        try:
-            return self.match_cache[dfa]
-        except KeyError:
-            pass
-        results = dfa.all_matching_regions(self.buffer)
-        results.sort(key=lambda t: (t[1] - t[0], t[1]))
-        assert all(dfa.matches(self.buffer[u:v]) for u, v in results)
-        self.match_cache[dfa] = results
-        return results
-
     @property
-    def calls(self):
+    def calls(self) -> int:
         """Return the number of calls that have been made to the underlying
         test function."""
         return self.engine.call_count
 
-    def consider_new_buffer(self, buffer):
-        """Returns True if after running this buffer the result would be
-        the current shrink_target."""
-        buffer = bytes(buffer)
-        return buffer.startswith(self.buffer) or self.incorporate_new_buffer(buffer)
+    @property
+    def misaligned(self) -> int:
+        return self.engine.misaligned_count
 
-    def incorporate_new_buffer(self, buffer):
+    def check_calls(self) -> None:
+        if self.calls - self.calls_at_last_shrink >= self.max_stall:
+            raise StopShrinking
+
+    def cached_test_function_ir(self, nodes):
+        # sometimes our shrinking passes try obviously invalid things. We handle
+        # discarding them in one place here.
+        for node in nodes:
+            if not choice_permitted(node.value, node.kwargs):
+                return None
+
+        result = self.engine.cached_test_function_ir([n.value for n in nodes])
+        self.incorporate_test_data(result)
+        self.check_calls()
+        return result
+
+    def consider_new_tree(self, tree: Sequence[IRNode]) -> bool:
+        tree = tree[: len(self.nodes)]
+
+        if startswith(tree, self.nodes):
+            return True
+
+        if sort_key_ir(self.nodes) < sort_key_ir(tree):
+            return False
+
+        previous = self.shrink_target
+        self.cached_test_function_ir(tree)
+        return previous is not self.shrink_target
+
+    def incorporate_new_buffer(
+        self, buffer
+    ):  # pragma: no cover # removing function soon
         """Either runs the test function on this buffer and returns True if
         that changed the shrink_target, or determines that doing so would
         be useless and returns False without running it."""
@@ -397,29 +450,16 @@ class Shrinker:
             return
         if (
             self.__predicate(data)
-            and sort_key(data.buffer) < sort_key(self.shrink_target.buffer)
+            and sort_key_ir(data.ir_nodes) < sort_key_ir(self.shrink_target.ir_nodes)
             and self.__allow_transition(self.shrink_target, data)
         ):
             self.update_shrink_target(data)
 
-    def cached_test_function(self, buffer):
-        """Returns a cached version of the underlying test function, so
-        that the result is either an Overrun object (if the buffer is
-        too short to be a valid test case) or a ConjectureData object
-        with status >= INVALID that would result from running this buffer."""
-
-        buffer = bytes(buffer)
-        result = self.engine.cached_test_function(buffer)
-        self.incorporate_test_data(result)
-        if self.calls - self.calls_at_last_shrink >= self.max_stall:
-            raise StopShrinking
-        return result
-
-    def debug(self, msg):
+    def debug(self, msg: str) -> None:
         self.engine.debug(msg)
 
     @property
-    def random(self):
+    def random(self) -> "Random":
         return self.engine.random
 
     def shrink(self):
@@ -428,21 +468,9 @@ class Shrinker:
         This method is "mostly idempotent" - calling it twice is unlikely to
         have any effect, though it has a non-zero probability of doing so.
         """
-        # We assume that if an all-zero block of bytes is an interesting
-        # example then we're not going to do better than that.
-        # This might not technically be true: e.g. for integers() | booleans()
-        # the simplest example is actually [1, 0]. Missing this case is fairly
-        # harmless and this allows us to make various simplifying assumptions
-        # about the structure of the data (principally that we're never
-        # operating on a block of all zero bytes so can use non-zeroness as a
-        # signpost of complexity).
-        if not any(self.shrink_target.buffer) or self.incorporate_new_buffer(
-            bytes(len(self.shrink_target.buffer))
-        ):
-            self.explain()
-            return
 
         try:
+            self.initial_coarse_reduction()
             self.greedy_shrink()
         except StopShrinking:
             # If we stopped shrinking because we're making slow progress (instead of
@@ -454,15 +482,16 @@ class Shrinker:
                 def s(n):
                     return "s" if n != 1 else ""
 
-                total_deleted = self.initial_size - len(self.shrink_target.buffer)
+                total_deleted = self.initial_size - len(self.shrink_target.choices)
                 calls = self.engine.call_count - self.initial_calls
+                misaligned = self.engine.misaligned_count - self.initial_misaligned
 
                 self.debug(
                     "---------------------\n"
                     "Shrink pass profiling\n"
                     "---------------------\n\n"
                     f"Shrinking made a total of {calls} call{s(calls)} of which "
-                    f"{self.shrinks} shrank. This deleted {total_deleted} bytes out "
+                    f"{self.shrinks} shrank and {misaligned} were misaligned. This deleted {total_deleted} choices out "
                     f"of {self.initial_size}."
                 )
                 for useful in [True, False]:
@@ -473,7 +502,8 @@ class Shrinker:
                         self.debug("Useless passes:")
                     self.debug("")
                     for p in sorted(
-                        self.passes, key=lambda t: (-t.calls, t.deletions, t.shrinks)
+                        self.passes_by_name.values(),
+                        key=lambda t: (-t.calls, t.deletions, t.shrinks),
                     ):
                         if p.calls == 0:
                             continue
@@ -481,35 +511,30 @@ class Shrinker:
                             continue
 
                         self.debug(
-                            "  * %s made %d call%s of which "
-                            "%d shrank, deleting %d byte%s."
-                            % (
-                                p.name,
-                                p.calls,
-                                s(p.calls),
-                                p.shrinks,
-                                p.deletions,
-                                s(p.deletions),
-                            )
+                            f"  * {p.name} made {p.calls} call{s(p.calls)} of which "
+                            f"{p.shrinks} shrank and {p.misaligned} were misaligned, "
+                            f"deleting {p.deletions} choice{s(p.deletions)}."
                         )
                 self.debug("")
         self.explain()
 
     def explain(self):
+        from hypothesis.internal.conjecture.engine import BUFFER_SIZE_IR
+
         if not self.should_explain or not self.shrink_target.arg_slices:
             return
-        from hypothesis.internal.conjecture.engine import BUFFER_SIZE
 
         self.max_stall = 1e999
         shrink_target = self.shrink_target
-        buffer = shrink_target.buffer
+        nodes = self.nodes
+        choices = self.choices
         chunks = defaultdict(list)
 
         # Before we start running experiments, let's check for known inputs which would
         # make them redundant.  The shrinking process means that we've already tried many
         # variations on the minimal example, so this can save a lot of time.
-        seen_passing_buffers = self.engine.passing_buffers(
-            prefix=buffer[: min(self.shrink_target.arg_slices)[0]]
+        seen_passing_seq = self.engine.passing_choice_sequences(
+            prefix=self.nodes[: min(self.shrink_target.arg_slices)[0]]
         )
 
         # Now that we've shrunk to a minimal failing example, it's time to try
@@ -521,8 +546,8 @@ class Shrinker:
             # Check for any previous examples that match the prefix and suffix,
             # so we can skip if we found a passing example while shrinking.
             if any(
-                seen.startswith(buffer[:start]) and seen.endswith(buffer[end:])
-                for seen in seen_passing_buffers
+                startswith(seen, nodes[:start]) and endswith(seen, nodes[end:])
+                for seen in seen_passing_seq
             ):
                 continue
 
@@ -537,51 +562,55 @@ class Shrinker:
                     # stop early if we're seeing mostly invalid examples
                     break  # pragma: no cover
 
-                buf_attempt_fixed = bytearray(buffer)
-                buf_attempt_fixed[start:end] = [
-                    self.random.randint(0, 255) for _ in range(end - start)
-                ]
-                result = self.engine.cached_test_function(
-                    buf_attempt_fixed, extend=BUFFER_SIZE - len(buf_attempt_fixed)
+                # replace start:end with random values
+                replacement = []
+                for i in range(start, end):
+                    node = nodes[i]
+                    if not node.was_forced:
+                        value = draw_choice(
+                            node.ir_type, node.kwargs, random=self.random
+                        )
+                        node = node.copy(with_value=value)
+                    replacement.append(node.value)
+
+                attempt = choices[:start] + tuple(replacement) + choices[end:]
+                result = self.engine.cached_test_function_ir(
+                    attempt, extend=BUFFER_SIZE_IR - ir_size(attempt)
                 )
 
                 # Turns out this was a variable-length part, so grab the infix...
-                if result.status == Status.OVERRUN:
-                    continue  # pragma: no cover
+                if result.status is Status.OVERRUN:
+                    continue  # pragma: no cover  # flakily covered
                 if not (
-                    len(buf_attempt_fixed) == len(result.buffer)
-                    and result.buffer.endswith(buffer[end:])
+                    len(attempt) == len(result.choices)
+                    and endswith(result.ir_nodes, nodes[end:])
                 ):
                     for ex, res in zip(shrink_target.examples, result.examples):
-                        assert ex.start == res.start
-                        assert ex.start <= start
+                        assert ex.ir_start == res.ir_start
+                        assert ex.ir_start <= start
                         assert ex.label == res.label
-                        if start == ex.start and end == ex.end:
-                            res_end = res.end
+                        if start == ex.ir_start and end == ex.ir_end:
+                            res_end = res.ir_end
                             break
                     else:
                         raise NotImplementedError("Expected matching prefixes")
 
-                    buf_attempt_fixed = (
-                        buffer[:start] + result.buffer[start:res_end] + buffer[end:]
+                    attempt = (
+                        choices[:start] + result.choices[start:res_end] + choices[end:]
                     )
-                    chunks[(start, end)].append(result.buffer[start:res_end])
-                    result = self.engine.cached_test_function(buf_attempt_fixed)
+                    chunks[(start, end)].append(result.choices[start:res_end])
+                    result = self.engine.cached_test_function_ir(attempt)
 
-                    if (
-                        result.status == Status.OVERRUN
-                        or len(buf_attempt_fixed) != len(result.buffer)
-                        or not result.buffer.endswith(buffer[end:])
-                    ):
-                        raise NotImplementedError("This should never happen")
+                    if result.status is Status.OVERRUN:
+                        continue  # pragma: no cover  # flakily covered
                 else:
-                    chunks[(start, end)].append(result.buffer[start:end])
+                    chunks[(start, end)].append(result.choices[start:end])
 
                 if shrink_target is not self.shrink_target:  # pragma: no cover
                     # If we've shrunk further without meaning to, bail out.
                     self.shrink_target.slice_comments.clear()
                     return
-                if result.status == Status.VALID:
+                if result.status is Status.VALID:
                     # The test passed, indicating that this param can't vary freely.
                     # However, it's really hard to write a simple and reliable covering
                     # test, because of our `seen_passing_buffers` check above.
@@ -600,29 +629,29 @@ class Shrinker:
         chunks_by_start_index = sorted(chunks.items())
         for _ in range(500):  # pragma: no branch
             # no-branch here because we don't coverage-test the abort-at-500 logic.
-            new_buf = bytearray()
+            new_choices = []
             prev_end = 0
             for (start, end), ls in chunks_by_start_index:
                 assert prev_end <= start < end, "these chunks must be nonoverlapping"
-                new_buf.extend(buffer[prev_end:start])
-                new_buf.extend(self.random.choice(ls))
+                new_choices.extend(choices[prev_end:start])
+                new_choices.extend(self.random.choice(ls))
                 prev_end = end
 
-            result = self.engine.cached_test_function(new_buf)
+            result = self.engine.cached_test_function_ir(new_choices)
 
             # This *can't* be a shrink because none of the components were.
             assert shrink_target is self.shrink_target
             if result.status == Status.VALID:
-                self.shrink_target.slice_comments[
-                    (0, 0)
-                ] = "The test sometimes passed when commented parts were varied together."
+                self.shrink_target.slice_comments[(0, 0)] = (
+                    "The test sometimes passed when commented parts were varied together."
+                )
                 break  # Test passed, this param can't vary freely.
             elif self.__predicate(result):  # pragma: no branch
                 n_same_failures_together += 1
                 if n_same_failures_together >= 100:
-                    self.shrink_target.slice_comments[
-                        (0, 0)
-                    ] = "The test always failed when commented parts were varied together."
+                    self.shrink_target.slice_comments[(0, 0)] = (
+                        "The test always failed when commented parts were varied together."
+                    )
                     break
 
     def greedy_shrink(self):
@@ -634,23 +663,137 @@ class Shrinker:
         """
         self.fixate_shrink_passes(
             [
-                block_program("X" * 5),
-                block_program("X" * 4),
-                block_program("X" * 3),
-                block_program("X" * 2),
-                block_program("X" * 1),
+                "try_trivial_examples",
+                node_program("X" * 5),
+                node_program("X" * 4),
+                node_program("X" * 3),
+                node_program("X" * 2),
+                node_program("X" * 1),
                 "pass_to_descendant",
                 "reorder_examples",
-                "minimize_floats",
-                "minimize_duplicated_blocks",
-                block_program("-XX"),
-                "minimize_individual_blocks",
-                block_program("--X"),
-                "redistribute_block_pairs",
-                "lower_blocks_together",
+                "minimize_duplicated_nodes",
+                "minimize_individual_nodes",
+                "redistribute_numeric_pairs",
+                "lower_integers_together",
             ]
-            + [dfa_replacement(n) for n in SHRINKING_DFAS]
         )
+
+    def initial_coarse_reduction(self):
+        """Performs some preliminary reductions that should not be
+        repeated as part of the main shrink passes.
+
+        The main reason why these can't be included as part of shrink
+        passes is that they have much more ability to make the test
+        case "worse". e.g. they might rerandomise part of it, significantly
+        increasing the value of individual nodes, which works in direct
+        opposition to the lexical shrinking and will frequently undo
+        its work.
+        """
+        self.reduce_each_alternative()
+
+    @derived_value  # type: ignore
+    def examples_starting_at(self):
+        result = [[] for _ in self.shrink_target.ir_nodes]
+        for i, ex in enumerate(self.examples):
+            # We can have zero-length examples that start at the end
+            if ex.ir_start < len(result):
+                result[ex.ir_start].append(i)
+        return tuple(map(tuple, result))
+
+    def reduce_each_alternative(self):
+        """This is a pass that is designed to rerandomise use of the
+        one_of strategy or things that look like it, in order to try
+        to move from later strategies to earlier ones in the branch
+        order.
+
+        It does this by trying to systematically lower each value it
+        finds that looks like it might be the branch decision for
+        one_of, and then attempts to repair any changes in shape that
+        this causes.
+        """
+        i = 0
+        while i < len(self.shrink_target.ir_nodes):
+            nodes = self.shrink_target.ir_nodes
+            node = nodes[i]
+            if (
+                node.ir_type == "integer"
+                and not node.was_forced
+                and node.value <= 10
+                and node.kwargs["min_value"] == 0
+            ):
+                assert isinstance(node.value, int)
+
+                # We've found a plausible candidate for a ``one_of`` choice.
+                # We now want to see if the shape of the test case actually depends
+                # on it. If it doesn't, then we don't need to do this (comparatively
+                # costly) pass, and can let much simpler lexicographic reduction
+                # handle it later.
+                #
+                # We test this by trying to set the value to zero and seeing if the
+                # shape changes, as measured by either changing the number of subsequent
+                # nodes, or changing the nodes in such a way as to cause one of the
+                # previous values to no longer be valid in its position.
+                zero_attempt = self.cached_test_function_ir(
+                    nodes[:i] + (nodes[i].copy(with_value=0),) + nodes[i + 1 :]
+                )
+                if (
+                    zero_attempt is not self.shrink_target
+                    and zero_attempt is not None
+                    and zero_attempt.status >= Status.VALID
+                ):
+                    changed_shape = len(zero_attempt.ir_nodes) != len(nodes)
+
+                    if not changed_shape:
+                        for j in range(i + 1, len(nodes)):
+                            zero_node = zero_attempt.ir_nodes[j]
+                            orig_node = nodes[j]
+                            if (
+                                zero_node.ir_type != orig_node.ir_type
+                                or not choice_permitted(
+                                    orig_node.value, zero_node.kwargs
+                                )
+                            ):
+                                changed_shape = True
+                                break
+                    if changed_shape:
+                        for v in range(node.value):
+                            if self.try_lower_node_as_alternative(i, v):
+                                break
+            i += 1
+
+    def try_lower_node_as_alternative(self, i, v):
+        """Attempt to lower `self.shrink_target.ir_nodes[i]` to `v`,
+        while rerandomising and attempting to repair any subsequent
+        changes to the shape of the test case that this causes."""
+        nodes = self.shrink_target.ir_nodes
+        initial_attempt = self.cached_test_function_ir(
+            nodes[:i] + (nodes[i].copy(with_value=v),) + nodes[i + 1 :]
+        )
+        if initial_attempt is self.shrink_target:
+            return True
+
+        prefix = nodes[:i] + (nodes[i].copy(with_value=v),)
+        initial = self.shrink_target
+        examples = self.examples_starting_at[i]
+        for _ in range(3):
+            random_attempt = self.engine.cached_test_function_ir(
+                [n.value for n in prefix], extend=len(nodes) * 2
+            )
+            if random_attempt.status < Status.VALID:
+                continue
+            self.incorporate_test_data(random_attempt)
+            for j in examples:
+                initial_ex = initial.examples[j]
+                attempt_ex = random_attempt.examples[j]
+                contents = random_attempt.ir_nodes[
+                    attempt_ex.ir_start : attempt_ex.ir_end
+                ]
+                self.consider_new_tree(
+                    nodes[:i] + contents + nodes[initial_ex.ir_end :]
+                )
+                if initial is not self.shrink_target:
+                    return True
+        return False
 
     @derived_value  # type: ignore
     def shrink_pass_choice_trees(self):
@@ -745,7 +888,7 @@ class Shrinker:
                 # the length are the best.
                 if self.shrink_target is before_sp:
                     reordering[sp] = 1
-                elif len(self.buffer) < len(before_sp.buffer):
+                elif len(self.choices) < len(before_sp.choices):
                     reordering[sp] = -1
                 else:
                     reordering[sp] = 0
@@ -753,19 +896,16 @@ class Shrinker:
             passes.sort(key=reordering.__getitem__)
 
     @property
-    def buffer(self):
-        return self.shrink_target.buffer
+    def nodes(self):
+        return self.shrink_target.ir_nodes
 
     @property
-    def blocks(self):
-        return self.shrink_target.blocks
+    def choices(self):
+        return self.shrink_target.choices
 
     @property
     def examples(self):
         return self.shrink_target.examples
-
-    def all_block_bounds(self):
-        return self.shrink_target.blocks.all_bounds()
 
     @derived_value  # type: ignore
     def examples_by_label(self):
@@ -806,12 +946,10 @@ class Shrinker:
         )
 
         ls = self.examples_by_label[label]
-
         i = chooser.choose(range(len(ls) - 1))
-
         ancestor = ls[i]
 
-        if i + 1 == len(ls) or ls[i + 1].start >= ancestor.end:
+        if i + 1 == len(ls) or ls[i + 1].ir_start >= ancestor.ir_end:
             return
 
         @self.cached(label, i)
@@ -820,27 +958,27 @@ class Shrinker:
             hi = len(ls)
             while lo + 1 < hi:
                 mid = (lo + hi) // 2
-                if ls[mid].start >= ancestor.end:
+                if ls[mid].ir_start >= ancestor.ir_end:
                     hi = mid
                 else:
                     lo = mid
-            return [t for t in ls[i + 1 : hi] if t.length < ancestor.length]
+            return [t for t in ls[i + 1 : hi] if t.ir_length < ancestor.ir_length]
 
-        descendant = chooser.choose(descendants, lambda ex: ex.length > 0)
+        descendant = chooser.choose(descendants, lambda ex: ex.ir_length > 0)
 
-        assert ancestor.start <= descendant.start
-        assert ancestor.end >= descendant.end
-        assert descendant.length < ancestor.length
+        assert ancestor.ir_start <= descendant.ir_start
+        assert ancestor.ir_end >= descendant.ir_end
+        assert descendant.ir_length < ancestor.ir_length
 
-        self.incorporate_new_buffer(
-            self.buffer[: ancestor.start]
-            + self.buffer[descendant.start : descendant.end]
-            + self.buffer[ancestor.end :]
+        self.consider_new_tree(
+            self.nodes[: ancestor.ir_start]
+            + self.nodes[descendant.ir_start : descendant.ir_end]
+            + self.nodes[ancestor.ir_end :]
         )
 
-    def lower_common_block_offset(self):
+    def lower_common_node_offset(self):
         """Sometimes we find ourselves in a situation where changes to one part
-        of the byte stream unlock changes to other parts. Sometimes this is
+        of the choice sequence unlock changes to other parts. Sometimes this is
         good, but sometimes this can cause us to exhibit exponential slow
         downs!
 
@@ -857,9 +995,9 @@ class Shrinker:
         This will take us O(m) iterations to complete, which is exponential in
         the data size, as we gradually zig zag our way towards zero.
 
-        This can only happen if we're failing to reduce the size of the byte
-        stream: The number of iterations that reduce the length of the byte
-        stream is bounded by that length.
+        This can only happen if we're failing to reduce the size of the choice
+        sequence: The number of iterations that reduce the length of the choice
+        sequence is bounded by that length.
 
         So what we do is this: We keep track of which blocks are changing, and
         then if there's some non-zero common offset to them we try and minimize
@@ -871,91 +1009,83 @@ class Shrinker:
         but it fails fast when it doesn't work and gets us out of a really
         nastily slow case when it does.
         """
-        if len(self.__changed_blocks) <= 1:
+        if len(self.__changed_nodes) <= 1:
             return
 
-        current = self.shrink_target
-
-        blocked = [current.buffer[u:v] for u, v in self.all_block_bounds()]
-
-        changed = [
-            i
-            for i in sorted(self.__changed_blocks)
-            if not self.shrink_target.blocks[i].trivial
-        ]
+        changed = []
+        for i in sorted(self.__changed_nodes):
+            node = self.nodes[i]
+            if node.trivial or node.ir_type != "integer":
+                continue
+            changed.append(node)
 
         if not changed:
             return
 
-        ints = [int_from_bytes(blocked[i]) for i in changed]
+        ints = [abs(node.value - node.kwargs["shrink_towards"]) for node in changed]
         offset = min(ints)
         assert offset > 0
 
         for i in range(len(ints)):
             ints[i] -= offset
 
-        def reoffset(o):
-            new_blocks = list(blocked)
-            for i, v in zip(changed, ints):
-                new_blocks[i] = int_to_bytes(v + o, len(blocked[i]))
-            return self.incorporate_new_buffer(b"".join(new_blocks))
+        st = self.shrink_target
 
-        Integer.shrink(offset, reoffset, random=self.random)
+        def offset_node(node, n):
+            return (
+                node.index,
+                node.index + 1,
+                [node.copy(with_value=node.kwargs["shrink_towards"] + n)],
+            )
+
+        def consider(n, sign):
+            return self.consider_new_tree(
+                replace_all(
+                    st.ir_nodes,
+                    [
+                        offset_node(node, sign * (n + v))
+                        for node, v in zip(changed, ints)
+                    ],
+                )
+            )
+
+        # shrink from both sides
+        Integer.shrink(offset, lambda n: consider(n, 1))
+        Integer.shrink(offset, lambda n: consider(n, -1))
         self.clear_change_tracking()
 
     def clear_change_tracking(self):
         self.__last_checked_changed_at = self.shrink_target
-        self.__all_changed_blocks = set()
+        self.__all_changed_nodes = set()
 
     def mark_changed(self, i):
-        self.__changed_blocks.add(i)
+        self.__changed_nodes.add(i)
 
     @property
-    def __changed_blocks(self):
-        if self.__last_checked_changed_at is not self.shrink_target:
-            prev_target = self.__last_checked_changed_at
-            new_target = self.shrink_target
-            assert prev_target is not new_target
-            prev = prev_target.buffer
-            new = new_target.buffer
-            assert sort_key(new) < sort_key(prev)
+    def __changed_nodes(self):
+        if self.__last_checked_changed_at is self.shrink_target:
+            return self.__all_changed_nodes
 
-            if (
-                len(new_target.blocks) != len(prev_target.blocks)
-                or new_target.blocks.endpoints != prev_target.blocks.endpoints
-            ):
-                self.__all_changed_blocks = set()
-            else:
-                blocks = new_target.blocks
+        prev_target = self.__last_checked_changed_at
+        new_target = self.shrink_target
+        assert prev_target is not new_target
+        prev_nodes = prev_target.ir_nodes
+        new_nodes = new_target.ir_nodes
+        assert sort_key_ir(new_target.ir_nodes) < sort_key_ir(prev_target.ir_nodes)
 
-                # Index of last block whose contents have been modified, found
-                # by checking if the tail past this point has been modified.
-                last_changed = binary_search(
-                    0,
-                    len(blocks),
-                    lambda i: prev[blocks.start(i) :] != new[blocks.start(i) :],
-                )
+        if len(prev_nodes) != len(new_nodes) or any(
+            n1.ir_type != n2.ir_type for n1, n2 in zip(prev_nodes, new_nodes)
+        ):
+            # should we check kwargs are equal as well?
+            self.__all_changed_nodes = set()
+        else:
+            assert len(prev_nodes) == len(new_nodes)
+            for i, (n1, n2) in enumerate(zip(prev_nodes, new_nodes)):
+                assert n1.ir_type == n2.ir_type
+                if not choice_equal(n1.value, n2.value):
+                    self.__all_changed_nodes.add(i)
 
-                # Index of the first block whose contents have been changed,
-                # because we know that this predicate is true for zero (because
-                # the prefix from the start is empty), so the result must be True
-                # for the bytes from the start of this block and False for the
-                # bytes from the end, hence the change is in this block.
-                first_changed = binary_search(
-                    0,
-                    len(blocks),
-                    lambda i: prev[: blocks.start(i)] == new[: blocks.start(i)],
-                )
-
-                # Between these two changed regions we now do a linear scan to
-                # check if any specific block values have changed.
-                for i in range(first_changed, last_changed + 1):
-                    u, v = blocks.bounds(i)
-                    if i not in self.__all_changed_blocks and prev[u:v] != new[u:v]:
-                        self.__all_changed_blocks.add(i)
-            self.__last_checked_changed_at = new_target
-        assert self.__last_checked_changed_at is self.shrink_target
-        return self.__all_changed_blocks
+        return self.__all_changed_nodes
 
     def update_shrink_target(self, new_target):
         assert isinstance(new_target, ConjectureResult)
@@ -973,94 +1103,130 @@ class Shrinker:
         self.shrink_target = new_target
         self.__derived_values = {}
 
-    def try_shrinking_blocks(self, blocks, b):
-        """Attempts to replace each block in the blocks list with b. Returns
+    def try_shrinking_nodes(self, nodes, n):
+        """Attempts to replace each node in the nodes list with n. Returns
         True if it succeeded (which may include some additional modifications
         to shrink_target).
 
-        In current usage it is expected that each of the blocks currently have
-        the same value, although this is not essential. Note that b must be
-        < the block at min(blocks) or this is not a valid shrink.
+        In current usage it is expected that each of the nodes currently have
+        the same value and ir type, although this is not essential. Note that
+        n must be < the node at min(nodes) or this is not a valid shrink.
 
         This method will attempt to do some small amount of work to delete data
-        that occurs after the end of the blocks. This is useful for cases where
-        there is some size dependency on the value of a block.
+        that occurs after the end of the nodes. This is useful for cases where
+        there is some size dependency on the value of a node.
         """
-        initial_attempt = bytearray(self.shrink_target.buffer)
-        for i, block in enumerate(blocks):
-            if block >= len(self.blocks):
-                blocks = blocks[:i]
-                break
-            u, v = self.blocks[block].bounds
-            n = min(self.blocks[block].length, len(b))
-            initial_attempt[v - n : v] = b[-n:]
+        # If the length of the shrink target has changed from under us such that
+        # the indices are out of bounds, give up on the replacement.
+        # TODO_BETTER_SHRINK: we probably want to narrow down the root cause here at some point.
+        if any(node.index >= len(self.nodes) for node in nodes):
+            return  # pragma: no cover
 
-        if not blocks:
+        initial_attempt = replace_all(
+            self.nodes,
+            [(node.index, node.index + 1, [node.copy(with_value=n)]) for node in nodes],
+        )
+
+        attempt = self.cached_test_function_ir(initial_attempt)
+
+        if attempt is None:
             return False
 
-        start = self.shrink_target.blocks[blocks[0]].start
-        end = self.shrink_target.blocks[blocks[-1]].end
-
-        initial_data = self.cached_test_function(initial_attempt)
-
-        if initial_data is self.shrink_target:
-            self.lower_common_block_offset()
+        if attempt is self.shrink_target:
+            # if the initial shrink was a success, try lowering offsets.
+            self.lower_common_node_offset()
             return True
 
         # If this produced something completely invalid we ditch it
         # here rather than trying to persevere.
-        if initial_data.status < Status.VALID:
+        if attempt.status is Status.OVERRUN:
             return False
 
-        # We've shrunk inside our group of blocks, so we have no way to
-        # continue. (This only happens when shrinking more than one block at
-        # a time).
-        if len(initial_data.buffer) < v:
+        if attempt.status is Status.INVALID:
             return False
 
-        lost_data = len(self.shrink_target.buffer) - len(initial_data.buffer)
+        if attempt.misaligned_at is not None:
+            # we're invalid due to a misalignment in the tree. We'll try to fix
+            # a very specific type of misalignment here: where we have a node of
+            # {"size": n} and tried to draw the same node, but with {"size": m < n}.
+            # This can occur with eg
+            #
+            #   n = data.draw_integer()
+            #   s = data.draw_string(min_size=n)
+            #
+            # where we try lowering n, resulting in the test_function drawing a lower
+            # min_size than our attempt had for the draw_string node.
+            #
+            # We'll now try realigning this tree by:
+            # * replacing the kwargs in our attempt with what test_function tried
+            #   to draw in practice
+            # * truncating the value of that node to match min_size
+            #
+            # This helps in the specific case of drawing a value and then drawing
+            # a collection of that size...and not much else. In practice this
+            # helps because this antipattern is fairly common.
 
-        # If this did not in fact cause the data size to shrink we
-        # bail here because it's not worth trying to delete stuff from
-        # the remainder.
-        if lost_data <= 0:
+            # TODO we'll probably want to apply the same trick as in the valid
+            # case of this function of preserving from the right instead of
+            # preserving from the left. see test_can_shrink_variable_string_draws.
+
+            (index, attempt_ir_type, attempt_kwargs, _attempt_forced) = (
+                attempt.misaligned_at
+            )
+            node = self.nodes[index]
+            if node.ir_type != attempt_ir_type:
+                return False  # pragma: no cover
+            if node.was_forced:
+                return False  # pragma: no cover
+
+            if node.ir_type in {"string", "bytes"}:
+                # if the size *increased*, we would have to guess what to pad with
+                # in order to try fixing up this attempt. Just give up.
+                if node.kwargs["min_size"] <= attempt_kwargs["min_size"]:
+                    # attempts which increase min_size tend to overrun rather than
+                    # be misaligned, making a covering case difficult.
+                    return False  # pragma: no cover
+                # the size decreased in our attempt. Try again, but replace with
+                # the min_size that we would have gotten, and truncate the value
+                # to that size by removing any elements past min_size.
+                return self.consider_new_tree(
+                    initial_attempt[: node.index]
+                    + [
+                        initial_attempt[node.index].copy(
+                            with_kwargs=attempt_kwargs,
+                            with_value=initial_attempt[node.index].value[
+                                : attempt_kwargs["min_size"]
+                            ],
+                        )
+                    ]
+                    + initial_attempt[node.index :]
+                )
+
+        lost_nodes = len(self.nodes) - len(attempt.ir_nodes)
+        if lost_nodes <= 0:
             return False
 
+        start = nodes[0].index
+        end = nodes[-1].index + 1
         # We now look for contiguous regions to delete that might help fix up
         # this failed shrink. We only look for contiguous regions of the right
         # lengths because doing anything more than that starts to get very
         # expensive. See minimize_individual_blocks for where we
         # try to be more aggressive.
-        regions_to_delete = {(end, end + lost_data)}
+        regions_to_delete = {(end, end + lost_nodes)}
 
-        for j in (blocks[-1] + 1, blocks[-1] + 2):
-            if j >= min(len(initial_data.blocks), len(self.blocks)):
+        for ex in self.examples:
+            if ex.ir_start > start:
                 continue
-            # We look for a block very shortly after the last one that has
-            # lost some of its size, and try to delete from the beginning so
-            # that it retains the same integer value. This is a bit of a hyper
-            # specific trick designed to make our integers() strategy shrink
-            # well.
-            r1, s1 = self.shrink_target.blocks[j].bounds
-            r2, s2 = initial_data.blocks[j].bounds
-            lost = (s1 - r1) - (s2 - r2)
-            # Apparently a coverage bug? An assert False in the body of this
-            # will reliably fail, but it shows up as uncovered.
-            if lost <= 0 or r1 != r2:  # pragma: no cover
-                continue
-            regions_to_delete.add((r1, r1 + lost))
-
-        for ex in self.shrink_target.examples:
-            if ex.start > start:
-                continue
-            if ex.end <= end:
+            if ex.ir_end <= end:
                 continue
 
-            replacement = initial_data.examples[ex.index]
+            if ex.index >= len(attempt.examples):
+                continue  # pragma: no cover
 
-            in_original = [c for c in ex.children if c.start >= end]
-
-            in_replaced = [c for c in replacement.children if c.start >= end]
+            replacement = attempt.examples[ex.index]
+            in_original = [c for c in ex.children if c.ir_start >= end]
+            in_replaced = [c for c in replacement.children if c.ir_start >= end]
 
             if len(in_replaced) >= len(in_original) or not in_replaced:
                 continue
@@ -1072,14 +1238,14 @@ class Shrinker:
             # important, so we try to arrange it so that it retains its
             # rightmost children instead of its leftmost.
             regions_to_delete.add(
-                (in_original[0].start, in_original[-len(in_replaced)].start)
+                (in_original[0].ir_start, in_original[-len(in_replaced)].ir_start)
             )
 
         for u, v in sorted(regions_to_delete, key=lambda x: x[1] - x[0], reverse=True):
-            try_with_deleted = bytearray(initial_attempt)
-            del try_with_deleted[u:v]
-            if self.incorporate_new_buffer(try_with_deleted):
+            try_with_deleted = initial_attempt[:u] + initial_attempt[v:]
+            if self.consider_new_tree(try_with_deleted):
                 return True
+
         return False
 
     def remove_discarded(self):
@@ -1103,11 +1269,11 @@ class Shrinker:
 
             for ex in self.shrink_target.examples:
                 if (
-                    ex.length > 0
+                    ex.ir_length > 0
                     and ex.discarded
-                    and (not discarded or ex.start >= discarded[-1][-1])
+                    and (not discarded or ex.ir_start >= discarded[-1][-1])
                 ):
-                    discarded.append((ex.start, ex.end))
+                    discarded.append((ex.ir_start, ex.ir_end))
 
             # This can happen if we have discards but they are all of
             # zero length. This shouldn't happen very often so it's
@@ -1116,35 +1282,24 @@ class Shrinker:
             if not discarded:
                 break
 
-            attempt = bytearray(self.shrink_target.buffer)
+            attempt = list(self.nodes)
             for u, v in reversed(discarded):
                 del attempt[u:v]
 
-            if not self.incorporate_new_buffer(attempt):
+            if not self.consider_new_tree(tuple(attempt)):
                 return False
         return True
 
     @derived_value  # type: ignore
-    def blocks_by_non_zero_suffix(self):
-        """Returns a list of blocks grouped by their non-zero suffix,
-        as a list of (suffix, indices) pairs, skipping all groupings
-        where there is only one index.
-
-        This is only used for the arguments of minimize_duplicated_blocks.
-        """
+    def duplicated_nodes(self):
+        """Returns a list of nodes grouped (ir_type, value)."""
         duplicates = defaultdict(list)
-        for block in self.blocks:
-            duplicates[non_zero_suffix(self.buffer[block.start : block.end])].append(
-                block.index
-            )
-        return duplicates
-
-    @derived_value  # type: ignore
-    def duplicated_block_suffixes(self):
-        return sorted(self.blocks_by_non_zero_suffix)
+        for node in self.nodes:
+            duplicates[(node.ir_type, choice_key(node.value))].append(node)
+        return list(duplicates.values())
 
     @defines_shrink_pass()
-    def minimize_duplicated_blocks(self, chooser):
+    def minimize_duplicated_nodes(self, chooser):
         """Find blocks that have been duplicated in multiple places and attempt
         to minimize all of the duplicates simultaneously.
 
@@ -1164,132 +1319,208 @@ class Shrinker:
         of the blocks doesn't matter very much because it allows us to replace
         more values at once.
         """
-        block = chooser.choose(self.duplicated_block_suffixes)
-        targets = self.blocks_by_non_zero_suffix[block]
-        if len(targets) <= 1:
+        nodes = chooser.choose(self.duplicated_nodes)
+        # we can't lower any nodes which are trivial. try proceeding with the
+        # remaining nodes.
+        nodes = [node for node in nodes if not node.trivial]
+        if len(nodes) <= 1:
             return
-        Lexical.shrink(
-            block,
-            lambda b: self.try_shrinking_blocks(targets, b),
-            random=self.random,
-            full=False,
-        )
+
+        self.minimize_nodes(nodes)
 
     @defines_shrink_pass()
-    def minimize_floats(self, chooser):
-        """Some shrinks that we employ that only really make sense for our
-        specific floating point encoding that are hard to discover from any
-        sort of reasonable general principle. This allows us to make
-        transformations like replacing a NaN with an Infinity or replacing
-        a float with its nearest integers that we would otherwise not be
-        able to due to them requiring very specific transformations of
-        the bit sequence.
-
-        We only apply these transformations to blocks that "look like" our
-        standard float encodings because they are only really meaningful
-        there. The logic for detecting this is reasonably precise, but
-        it doesn't matter if it's wrong. These are always valid
-        transformations to make, they just don't necessarily correspond to
-        anything particularly meaningful for non-float values.
-        """
-
-        ex = chooser.choose(
-            self.examples,
-            lambda ex: (
-                ex.label == DRAW_FLOAT_LABEL
-                and len(ex.children) == 2
-                and ex.children[1].length == 8
-            ),
-        )
-
-        u = ex.children[1].start
-        v = ex.children[1].end
-        buf = self.shrink_target.buffer
-        b = buf[u:v]
-        f = lex_to_float(int_from_bytes(b))
-        b2 = int_to_bytes(float_to_lex(f), 8)
-        if b == b2 or self.consider_new_buffer(buf[:u] + b2 + buf[v:]):
-            Float.shrink(
-                f,
-                lambda x: self.consider_new_buffer(
-                    self.shrink_target.buffer[:u]
-                    + int_to_bytes(float_to_lex(x), 8)
-                    + self.shrink_target.buffer[v:]
-                ),
-                random=self.random,
-            )
-
-    @defines_shrink_pass()
-    def redistribute_block_pairs(self, chooser):
-        """If there is a sum of generated integers that we need their sum
+    def redistribute_numeric_pairs(self, chooser):
+        """If there is a sum of generated numbers that we need their sum
         to exceed some bound, lowering one of them requires raising the
         other. This pass enables that."""
 
-        block = chooser.choose(self.blocks, lambda b: not b.all_zero)
+        # look for a pair of nodes (node1, node2) which are both numeric
+        # and aren't separated by too many other nodes. We'll decrease node1 and
+        # increase node2 (note that the other way around doesn't make sense as
+        # it's strictly worse in the ordering).
+        def can_choose_node(node):
+            # don't choose nan, inf, or floats above the threshold where f + 1 > f
+            # (which is not necessarily true for floats above MAX_PRECISE_INTEGER).
+            # The motivation for the last condition is to avoid trying weird
+            # non-shrinks where we raise one node and think we lowered another
+            # (but didn't).
+            return node.ir_type in {"integer", "float"} and not (
+                node.ir_type == "float"
+                and (math.isnan(node.value) or abs(node.value) >= MAX_PRECISE_INTEGER)
+            )
 
-        for j in range(block.index + 1, len(self.blocks)):
-            next_block = self.blocks[j]
-            if next_block.length == block.length:
-                break
-        else:
-            return
+        node1 = chooser.choose(
+            self.nodes,
+            lambda node: can_choose_node(node) and not node.trivial,
+        )
+        node2 = chooser.choose(
+            self.nodes,
+            lambda node: can_choose_node(node)
+            # Note that it's fine for node2 to be trivial, because we're going to
+            # explicitly make it *not* trivial by adding to its value.
+            and not node.was_forced
+            # to avoid quadratic behavior, scan ahead only a small amount for
+            # the related node.
+            and node1.index < node.index <= node1.index + 4,
+        )
 
-        buffer = self.buffer
+        m: Union[int, float] = node1.value
+        n: Union[int, float] = node2.value
 
-        m = int_from_bytes(buffer[block.start : block.end])
-        n = int_from_bytes(buffer[next_block.start : next_block.end])
-
-        def boost(k):
+        def boost(k: int) -> bool:
             if k > m:
                 return False
-            attempt = bytearray(buffer)
-            attempt[block.start : block.end] = int_to_bytes(m - k, block.length)
+
             try:
-                attempt[next_block.start : next_block.end] = int_to_bytes(
-                    n + k, next_block.length
-                )
-            except OverflowError:
+                v1 = m - k
+                v2 = n + k
+            except OverflowError:  # pragma: no cover
+                # if n or m is a float and k is over sys.float_info.max, coercing
+                # k to a float will overflow.
                 return False
-            return self.consider_new_buffer(attempt)
+
+            # if we've increased node2 to the point that we're past max precision,
+            # give up - things have become too unstable.
+            if node1.ir_type == "float" and v2 >= MAX_PRECISE_INTEGER:
+                return False
+
+            return self.consider_new_tree(
+                self.nodes[: node1.index]
+                + (node1.copy(with_value=v1),)
+                + self.nodes[node1.index + 1 : node2.index]
+                + (node2.copy(with_value=v2),)
+                + self.nodes[node2.index + 1 :]
+            )
 
         find_integer(boost)
 
     @defines_shrink_pass()
-    def lower_blocks_together(self, chooser):
-        block = chooser.choose(self.blocks, lambda b: not b.all_zero)
-
-        # Choose the next block to be up to eight blocks onwards. We don't
-        # want to go too far (to avoid quadratic time) but it's worth a
-        # reasonable amount of lookahead, especially as we expect most
-        # blocks are zero by this point anyway.
-        next_block = self.blocks[
+    def lower_integers_together(self, chooser):
+        node1 = chooser.choose(
+            self.nodes, lambda n: n.ir_type == "integer" and not n.trivial
+        )
+        # Search up to 3 nodes ahead, to avoid quadratic time.
+        node2 = self.nodes[
             chooser.choose(
-                range(block.index + 1, min(len(self.blocks), block.index + 9)),
-                lambda j: not self.blocks[j].all_zero,
+                range(node1.index + 1, min(len(self.nodes), node1.index + 3 + 1)),
+                lambda i: self.nodes[i].ir_type == "integer",
             )
         ]
 
-        buffer = self.buffer
+        # one might expect us to require node2 to be nontrivial, and to minimize
+        # the node which is closer to its shrink_towards, rather than node1
+        # unconditionally. In reality, it's acceptable for us to transition node2
+        # from trivial to nontrivial, because the shrink ordering is dominated by
+        # the complexity of the earlier node1. What matters is minimizing node1.
+        shrink_towards = node1.kwargs["shrink_towards"]
 
-        m = int_from_bytes(buffer[block.start : block.end])
-        n = int_from_bytes(buffer[next_block.start : next_block.end])
-
-        def lower(k):
-            if k > min(m, n):
-                return False
-            attempt = bytearray(buffer)
-            attempt[block.start : block.end] = int_to_bytes(m - k, block.length)
-            attempt[next_block.start : next_block.end] = int_to_bytes(
-                n - k, next_block.length
+        def consider(n):
+            return self.consider_new_tree(
+                self.nodes[: node1.index]
+                + (node1.copy(with_value=node1.value - n),)
+                + self.nodes[node1.index + 1 : node2.index]
+                + (node2.copy(with_value=node2.value - n),)
+                + self.nodes[node2.index + 1 :]
             )
-            assert len(attempt) == len(buffer)
-            return self.consider_new_buffer(attempt)
 
-        find_integer(lower)
+        find_integer(lambda n: consider(shrink_towards - n))
+        find_integer(lambda n: consider(n - shrink_towards))
+
+    def minimize_nodes(self, nodes):
+        ir_type = nodes[0].ir_type
+        value = nodes[0].value
+        # unlike ir_type and value, kwargs are *not* guaranteed to be equal among all
+        # passed nodes. We arbitrarily use the kwargs of the first node. I think
+        # this is unsound (= leads to us trying shrinks that could not have been
+        # generated), but those get discarded at test-time, and this enables useful
+        # slips where kwargs are not equal but are close enough that doing the
+        # same operation on both basically just works.
+        kwargs = nodes[0].kwargs
+        assert all(
+            node.ir_type == ir_type and choice_equal(node.value, value)
+            for node in nodes
+        )
+
+        if ir_type == "integer":
+            shrink_towards = kwargs["shrink_towards"]
+            # try shrinking from both sides towards shrink_towards.
+            # we're starting from n = abs(shrink_towards - value). Because the
+            # shrinker will not check its starting value, we need to try
+            # shrinking to n first.
+            self.try_shrinking_nodes(nodes, abs(shrink_towards - value))
+            Integer.shrink(
+                abs(shrink_towards - value),
+                lambda n: self.try_shrinking_nodes(nodes, shrink_towards + n),
+            )
+            Integer.shrink(
+                abs(shrink_towards - value),
+                lambda n: self.try_shrinking_nodes(nodes, shrink_towards - n),
+            )
+        elif ir_type == "float":
+            self.try_shrinking_nodes(nodes, abs(value))
+            Float.shrink(
+                abs(value),
+                lambda val: self.try_shrinking_nodes(nodes, val),
+            )
+            Float.shrink(
+                abs(value),
+                lambda val: self.try_shrinking_nodes(nodes, -val),
+            )
+        elif ir_type == "boolean":
+            # must be True, otherwise would be trivial and not selected.
+            assert value is True
+            # only one thing to try: false!
+            self.try_shrinking_nodes(nodes, False)
+        elif ir_type == "bytes":
+            Bytes.shrink(
+                value,
+                lambda val: self.try_shrinking_nodes(nodes, val),
+                min_size=kwargs["min_size"],
+            )
+        elif ir_type == "string":
+            String.shrink(
+                value,
+                lambda val: self.try_shrinking_nodes(nodes, val),
+                intervals=kwargs["intervals"],
+                min_size=kwargs["min_size"],
+            )
+        else:
+            raise NotImplementedError
 
     @defines_shrink_pass()
-    def minimize_individual_blocks(self, chooser):
-        """Attempt to minimize each block in sequence.
+    def try_trivial_examples(self, chooser):
+        i = chooser.choose(range(len(self.examples)))
+
+        prev = self.shrink_target
+        nodes = self.shrink_target.ir_nodes
+        ex = self.examples[i]
+        prefix = nodes[: ex.ir_start]
+        replacement = tuple(
+            [
+                (
+                    node
+                    if node.was_forced
+                    else node.copy(
+                        with_value=choice_from_index(0, node.ir_type, node.kwargs)
+                    )
+                )
+                for node in nodes[ex.ir_start : ex.ir_end]
+            ]
+        )
+        suffix = nodes[ex.ir_end :]
+        attempt = self.cached_test_function_ir(prefix + replacement + suffix)
+
+        if self.shrink_target is not prev:
+            return
+
+        if isinstance(attempt, ConjectureResult):
+            new_ex = attempt.examples[i]
+            new_replacement = attempt.ir_nodes[new_ex.ir_start : new_ex.ir_end]
+            self.consider_new_tree(prefix + new_replacement + suffix)
+
+    @defines_shrink_pass()
+    def minimize_individual_nodes(self, chooser):
+        """Attempt to minimize each node in sequence.
 
         This is the pass that ensures that e.g. each integer we draw is a
         minimum value. So it's the part that guarantees that if we e.g. do
@@ -1299,75 +1530,94 @@ class Shrinker:
 
         then in our shrunk example, x = 10 rather than say 97.
 
-        If we are unsuccessful at minimizing a block of interest we then
+        If we are unsuccessful at minimizing a node of interest we then
         check if that's because it's changing the size of the test case and,
         if so, we also make an attempt to delete parts of the test case to
         see if that fixes it.
 
-        We handle most of the common cases in try_shrinking_blocks which is
+        We handle most of the common cases in try_shrinking_nodes which is
         pretty good at clearing out large contiguous blocks of dead space,
         but it fails when there is data that has to stay in particular places
         in the list.
         """
-        block = chooser.choose(self.blocks, lambda b: not b.trivial)
+        node = chooser.choose(self.nodes, lambda node: not node.trivial)
+        initial_target = self.shrink_target
 
-        initial = self.shrink_target
-        u, v = block.bounds
-        i = block.index
-        Lexical.shrink(
-            self.shrink_target.buffer[u:v],
-            lambda b: self.try_shrinking_blocks((i,), b),
-            random=self.random,
-            full=False,
-        )
+        self.minimize_nodes([node])
+        if self.shrink_target is not initial_target:
+            # the shrink target changed, so our shrink worked. Defer doing
+            # anything more intelligent until this shrink fails.
+            return
 
-        if self.shrink_target is not initial:
+        # the shrink failed. One particularly common case where minimizing a
+        # node can fail is the antipattern of drawing a size and then drawing a
+        # collection of that size, or more generally when there is a size
+        # dependency on some single node. We'll explicitly try and fix up this
+        # common case here: if decreasing an integer node by one would reduce
+        # the size of the generated input, we'll try deleting things after that
+        # node and see if the resulting attempt works.
+
+        if node.ir_type != "integer":
+            # Only try this fixup logic on integer draws. Almost all size
+            # dependencies are on integer draws, and if it's not, it's doing
+            # something convoluted enough that it is unlikely to shrink well anyway.
+            # TODO: extent to floats? we probably currently fail on the following,
+            # albeit convoluted example:
+            # n = int(data.draw(st.floats()))
+            # s = data.draw(st.lists(st.integers(), min_size=n, max_size=n))
             return
 
         lowered = (
-            self.buffer[: block.start]
-            + int_to_bytes(
-                int_from_bytes(self.buffer[block.start : block.end]) - 1, block.length
-            )
-            + self.buffer[block.end :]
+            self.nodes[: node.index]
+            + (node.copy(with_value=node.value - 1),)
+            + self.nodes[node.index + 1 :]
         )
-        attempt = self.cached_test_function(lowered)
+        attempt = self.cached_test_function_ir(lowered)
         if (
-            attempt.status < Status.VALID
-            or len(attempt.buffer) == len(self.buffer)
-            or len(attempt.buffer) == block.end
+            attempt is None
+            or attempt.status < Status.VALID
+            or len(attempt.ir_nodes) == len(self.nodes)
+            or len(attempt.ir_nodes) == node.index + 1
         ):
+            # no point in trying our size-dependency-logic if our attempt at
+            # lowering the node resulted in:
+            # * an invalid conjecture data
+            # * the same number of nodes as before
+            # * no nodes beyond the lowered node (nothing to try to delete afterwards)
             return
 
-        # If it were then the lexical shrink should have worked and we could
+        # If it were then the original shrink should have worked and we could
         # never have got here.
         assert attempt is not self.shrink_target
 
-        @self.cached(block.index)
-        def first_example_after_block():
+        @self.cached(node.index)
+        def first_example_after_node():
             lo = 0
             hi = len(self.examples)
             while lo + 1 < hi:
                 mid = (lo + hi) // 2
                 ex = self.examples[mid]
-                if ex.start >= block.end:
+                if ex.ir_start >= node.index:
                     hi = mid
                 else:
                     lo = mid
             return hi
 
-        ex = self.examples[
-            chooser.choose(
-                range(first_example_after_block, len(self.examples)),
-                lambda i: self.examples[i].length > 0,
-            )
-        ]
-
-        u, v = block.bounds
-
-        buf = bytearray(lowered)
-        del buf[ex.start : ex.end]
-        self.incorporate_new_buffer(buf)
+        # we try deleting both entire examples, and single nodes.
+        # If we wanted to get more aggressive, we could try deleting n
+        # consecutive nodes (that don't cross an example boundary) for say
+        # n <= 2 or n <= 3.
+        if chooser.choose([True, False]):
+            ex = self.examples[
+                chooser.choose(
+                    range(first_example_after_node, len(self.examples)),
+                    lambda i: self.examples[i].ir_length > 0,
+                )
+            ]
+            self.consider_new_tree(lowered[: ex.ir_start] + lowered[ex.ir_end :])
+        else:
+            node = self.nodes[chooser.choose(range(node.index + 1, len(self.nodes)))]
+            self.consider_new_tree(lowered[: node.index] + lowered[node.index + 1 :])
 
     @defines_shrink_pass()
     def reorder_examples(self, chooser):
@@ -1392,61 +1642,62 @@ class Shrinker:
         ex = chooser.choose(self.examples)
         label = chooser.choose(ex.children).label
 
-        group = [c for c in ex.children if c.label == label]
-        if len(group) <= 1:
+        examples = [c for c in ex.children if c.label == label]
+        if len(examples) <= 1:
             return
-
         st = self.shrink_target
-        pieces = [st.buffer[ex.start : ex.end] for ex in group]
-        endpoints = [(ex.start, ex.end) for ex in group]
+        endpoints = [(ex.ir_start, ex.ir_end) for ex in examples]
 
         Ordering.shrink(
-            pieces,
-            lambda ls: self.consider_new_buffer(
-                replace_all(st.buffer, [(u, v, r) for (u, v), r in zip(endpoints, ls)])
+            range(len(examples)),
+            lambda indices: self.consider_new_tree(
+                replace_all(
+                    st.ir_nodes,
+                    [
+                        (
+                            u,
+                            v,
+                            st.ir_nodes[examples[i].ir_start : examples[i].ir_end],
+                        )
+                        for (u, v), i in zip(endpoints, indices)
+                    ],
+                )
             ),
-            random=self.random,
+            key=lambda i: sort_key_ir(
+                st.ir_nodes[examples[i].ir_start : examples[i].ir_end]
+            ),
         )
 
-    def run_block_program(self, i, description, original, repeats=1):
-        """Block programs are a mini-DSL for block rewriting, defined as a sequence
-        of commands that can be run at some index into the blocks
+    def run_node_program(self, i, description, original, repeats=1):
+        """Node programs are a mini-DSL for node rewriting, defined as a sequence
+        of commands that can be run at some index into the nodes
 
         Commands are:
 
-            * "-", subtract one from this block.
-            * "X", delete this block
+            * "X", delete this node
 
-        If a command does not apply (currently only because it's - on a zero
-        block) the block will be silently skipped over.
-
-        This method runs the block program in ``description`` at block index
+        This method runs the node program in ``description`` at node index
         ``i`` on the ConjectureData ``original``. If ``repeats > 1`` then it
         will attempt to approximate the results of running it that many times.
 
         Returns True if this successfully changes the underlying shrink target,
         else False.
         """
-        if i + len(description) > len(original.blocks) or i < 0:
+        if i + len(description) > len(original.ir_nodes) or i < 0:
             return False
-        attempt = bytearray(original.buffer)
+        attempt = list(original.ir_nodes)
         for _ in range(repeats):
-            for k, d in reversed(list(enumerate(description))):
+            for k, command in reversed(list(enumerate(description))):
                 j = i + k
-                u, v = original.blocks[j].bounds
-                if v > len(attempt):
+                if j >= len(attempt):
                     return False
-                if d == "-":
-                    value = int_from_bytes(attempt[u:v])
-                    if value == 0:
-                        return False
-                    else:
-                        attempt[u:v] = int_to_bytes(value - 1, v - u)
-                elif d == "X":
-                    del attempt[u:v]
+
+                if command == "X":
+                    del attempt[j]
                 else:
-                    raise NotImplementedError(f"Unrecognised command {d!r}")
-        return self.incorporate_new_buffer(attempt)
+                    raise NotImplementedError(f"Unrecognised command {command!r}")
+
+        return self.consider_new_tree(attempt)
 
 
 def shrink_pass_family(f):
@@ -1466,33 +1717,20 @@ def shrink_pass_family(f):
 
 
 @shrink_pass_family
-def block_program(self, chooser, description):
-    """Mini-DSL for block rewriting. A sequence of commands that will be run
-    over all contiguous sequences of blocks of the description length in order.
-    Commands are:
-
-        * ".", keep this block unchanged
-        * "-", subtract one from this block.
-        * "0", replace this block with zero
-        * "X", delete this block
-
-    If a command does not apply (currently only because it's - on a zero
-    block) the block will be silently skipped over. As a side effect of
-    running a block program its score will be updated.
-    """
+def node_program(self, chooser, description):
     n = len(description)
+    # Adaptively attempt to run the node program at the current
+    # index. If this successfully applies the node program ``k`` times
+    # then this runs in ``O(log(k))`` test function calls.
+    i = chooser.choose(range(len(self.nodes) - n + 1))
 
-    """Adaptively attempt to run the block program at the current
-    index. If this successfully applies the block program ``k`` times
-    then this runs in ``O(log(k))`` test function calls."""
-    i = chooser.choose(range(len(self.shrink_target.blocks) - n))
-    # First, run the block program at the chosen index. If this fails,
+    # First, run the node program at the chosen index. If this fails,
     # don't do any extra work, so that failure is as cheap as possible.
-    if not self.run_block_program(i, description, original=self.shrink_target):
+    if not self.run_node_program(i, description, original=self.shrink_target):
         return
 
     # Because we run in a random order we will often find ourselves in the middle
-    # of a region where we could run the block program. We thus start by moving
+    # of a region where we could run the node program. We thus start by moving
     # left to the beginning of that region if possible in order to to start from
     # the beginning of that region.
     def offset_left(k):
@@ -1500,45 +1738,17 @@ def block_program(self, chooser, description):
 
     i = offset_left(
         find_integer(
-            lambda k: self.run_block_program(
+            lambda k: self.run_node_program(
                 offset_left(k), description, original=self.shrink_target
             )
         )
     )
 
     original = self.shrink_target
-
     # Now try to run the block program multiple times here.
     find_integer(
-        lambda k: self.run_block_program(i, description, original=original, repeats=k)
+        lambda k: self.run_node_program(i, description, original=original, repeats=k)
     )
-
-
-@shrink_pass_family
-def dfa_replacement(self, chooser, dfa_name):
-    """Use one of our previously learned shrinking DFAs to reduce
-    the current test case. This works by finding a match of the DFA in the
-    current buffer that is not already minimal and attempting to replace it
-    with the minimal string matching that DFA.
-    """
-
-    try:
-        dfa = SHRINKING_DFAS[dfa_name]
-    except KeyError:
-        dfa = self.extra_dfas[dfa_name]
-
-    matching_regions = self.matching_regions(dfa)
-    minimal = next(dfa.all_matching_strings())
-    u, v = chooser.choose(
-        matching_regions, lambda t: self.buffer[t[0] : t[1]] != minimal
-    )
-    p = self.buffer[u:v]
-    assert sort_key(minimal) < sort_key(p)
-    replaced = self.buffer[:u] + minimal + self.buffer[v:]
-
-    assert sort_key(replaced) < sort_key(self.buffer)
-
-    self.consider_new_buffer(replaced)
 
 
 @attr.s(slots=True, eq=False)
@@ -1550,17 +1760,19 @@ class ShrinkPass:
     last_prefix = attr.ib(default=())
     successes = attr.ib(default=0)
     calls = attr.ib(default=0)
+    misaligned = attr.ib(default=0)
     shrinks = attr.ib(default=0)
     deletions = attr.ib(default=0)
 
-    def step(self, random_order=False):
+    def step(self, *, random_order=False):
         tree = self.shrinker.shrink_pass_choice_trees[self]
         if tree.exhausted:
             return False
 
         initial_shrinks = self.shrinker.shrinks
         initial_calls = self.shrinker.calls
-        size = len(self.shrinker.shrink_target.buffer)
+        initial_misaligned = self.shrinker.misaligned
+        size = len(self.shrinker.shrink_target.choices)
         self.shrinker.engine.explain_next_call_as(self.name)
 
         if random_order:
@@ -1575,23 +1787,15 @@ class ShrinkPass:
             )
         finally:
             self.calls += self.shrinker.calls - initial_calls
+            self.misaligned += self.shrinker.misaligned - initial_misaligned
             self.shrinks += self.shrinker.shrinks - initial_shrinks
-            self.deletions += size - len(self.shrinker.shrink_target.buffer)
+            self.deletions += size - len(self.shrinker.shrink_target.choices)
             self.shrinker.engine.clear_call_explanation()
         return True
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self.run_with_chooser.__name__
-
-
-def non_zero_suffix(b):
-    """Returns the longest suffix of b that starts with a non-zero
-    byte."""
-    i = 0
-    while i < len(b) and b[i] == 0:
-        i += 1
-    return b[i:]
 
 
 class StopShrinking(Exception):

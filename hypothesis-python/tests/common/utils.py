@@ -10,6 +10,7 @@
 
 import contextlib
 import sys
+import warnings
 from io import StringIO
 from types import SimpleNamespace
 
@@ -17,6 +18,7 @@ from hypothesis import Phase, settings
 from hypothesis.errors import HypothesisDeprecationWarning
 from hypothesis.internal.entropy import deterministic_PRNG
 from hypothesis.internal.floats import next_down
+from hypothesis.internal.observability import TESTCASE_CALLBACKS
 from hypothesis.internal.reflection import proxies
 from hypothesis.reporting import default, with_reporter
 from hypothesis.strategies._internal.core import from_type, register_type_strategy
@@ -45,6 +47,20 @@ except ModuleNotFoundError:
             raise AssertionError(
                 f"Expected to raise an exception ({expected_exception!r}) but didn't"
             ) from None
+
+
+try:
+    from pytest import mark
+except ModuleNotFoundError:
+
+    def skipif_emscripten(f):
+        return f
+
+else:
+    skipif_emscripten = mark.skipif(
+        sys.platform == "emscripten",
+        reason="threads, processes, etc. are not available in the browser",
+    )
 
 
 no_shrink = tuple(set(settings.default.phases) - {Phase.shrink, Phase.explain})
@@ -198,14 +214,33 @@ def temp_registered(type_, strat_or_factory):
     previously-registered strategy which we got wrong in a few places.
     """
     prev = _global_type_lookup.get(type_)
+    register_type_strategy(type_, strat_or_factory)
     try:
-        register_type_strategy(type_, strat_or_factory)
         yield
     finally:
         del _global_type_lookup[type_]
         from_type.__clear_cache()
         if prev is not None:
             register_type_strategy(type_, prev)
+
+
+@contextlib.contextmanager
+def raises_warning(expected_warning, match=None):
+    """Use instead of pytest.warns to check that the raised warning is handled properly"""
+    with raises(expected_warning, match=match) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", category=expected_warning)
+            yield r
+
+
+@contextlib.contextmanager
+def capture_observations():
+    ls = []
+    TESTCASE_CALLBACKS.append(ls.append)
+    try:
+        yield ls
+    finally:
+        TESTCASE_CALLBACKS.remove(ls.append)
 
 
 # Specifies whether we can represent subnormal floating point numbers.

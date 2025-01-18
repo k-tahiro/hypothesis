@@ -9,18 +9,24 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import datetime
+import re
 import sys
 import types
 from pathlib import Path
 
-import sphinx_rtd_theme
-
 root = Path(__file__).parent.parent
 sys.path.append(str(root / "src"))
+sys.path.append(str(Path(__file__).parent / "_ext"))
 
+needs_sphinx = re.search(
+    r"sphinx==([0-9\.]+)", root.joinpath("../requirements/tools.txt").read_text()
+).group(1)
+default_role = "py:obj"
+nitpicky = True
 
 autodoc_member_order = "bysource"
 autodoc_typehints = "none"
+maximum_signature_line_length = 60  # either one line, or one param per line
 
 extensions = [
     "sphinx.ext.autodoc",
@@ -30,6 +36,10 @@ extensions = [
     "hoverxref.extension",
     "sphinx_codeautolink",
     "sphinx_selective_exclude.eager_only",
+    "sphinx-jsonschema",
+    # loading this extension overrides the default -b linkcheck behavior with
+    # custom url ignore logic. see hypothesis_linkcheck.py for details.
+    "hypothesis_linkcheck",
 ]
 
 templates_path = ["_templates"]
@@ -42,7 +52,7 @@ master_doc = "index"
 # General information about the project.
 project = "Hypothesis"
 author = "David R. MacIver"
-copyright = f"2013-{datetime.datetime.utcnow().year}, {author}"
+copyright = f"2013-{datetime.date.today().year}, {author}"
 
 _d = {}
 _version_file = root.joinpath("src", "hypothesis", "version.py")
@@ -79,12 +89,19 @@ def setup(app):
 
 
 language = "en"
-
 exclude_patterns = ["_build"]
-
 pygments_style = "sphinx"
-
 todo_include_todos = False
+
+# To run linkcheck (last argument is the output dir)
+#   sphinx-build --builder linkcheck hypothesis-python/docs linkcheck
+linkcheck_ignore = [
+    # we'll assume that python isn't going to break peps, and github isn't going
+    # to break issues/pulls. (and if they did, we'd hopefully notice quickly).
+    r"https://peps.python.org/pep-.*",
+    r"https://github.com/HypothesisWorks/hypothesis/issues/\d+",
+    r"https://github.com/HypothesisWorks/hypothesis/pull/\d+",
+]
 
 # See https://sphinx-hoverxref.readthedocs.io/en/latest/configuration.html
 hoverxref_auto_ref = True
@@ -111,6 +128,8 @@ intersphinx_mapping = {
     "redis": ("https://redis-py.readthedocs.io/en/stable/", None),
     "attrs": ("https://www.attrs.org/en/stable/", None),
     "sphinx": ("https://www.sphinx-doc.org/en/master/", None),
+    "IPython": ("https://ipython.readthedocs.io/en/stable/", None),
+    "lark": ("https://lark-parser.readthedocs.io/en/stable/", None),
 }
 
 autodoc_mock_imports = ["numpy", "pandas", "redis", "django", "pytz"]
@@ -142,9 +161,9 @@ extlinks = {
 
 html_theme = "sphinx_rtd_theme"
 
-html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
-
 html_static_path = ["_static"]
+
+html_css_files = ["better-signatures.css", "wrap-in-tables.css"]
 
 htmlhelp_basename = "Hypothesisdoc"
 

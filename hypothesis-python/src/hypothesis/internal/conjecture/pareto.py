@@ -13,8 +13,8 @@ from enum import Enum
 from sortedcontainers import SortedList
 
 from hypothesis.internal.conjecture.data import ConjectureData, ConjectureResult, Status
-from hypothesis.internal.conjecture.junkdrawer import LazySequenceCopy, swap
-from hypothesis.internal.conjecture.shrinker import sort_key
+from hypothesis.internal.conjecture.junkdrawer import LazySequenceCopy
+from hypothesis.internal.conjecture.shrinker import sort_key_ir
 
 NO_SCORE = float("-inf")
 
@@ -45,10 +45,12 @@ def dominance(left, right):
     more structured or failing tests it can be useful to track, and future work
     will depend on it more."""
 
-    if left.buffer == right.buffer:
+    left_key = sort_key_ir(left.ir_nodes)
+    right_key = sort_key_ir(right.ir_nodes)
+    if left_key == right_key:
         return DominanceRelation.EQUAL
 
-    if sort_key(right.buffer) < sort_key(left.buffer):
+    if right_key < left_key:
         result = dominance(left=right, right=left)
         if result == DominanceRelation.LEFT_DOMINATES:
             return DominanceRelation.RIGHT_DOMINATES
@@ -60,7 +62,7 @@ def dominance(left, right):
             return result
 
     # Either left is better or there is no dominance relationship.
-    assert sort_key(left.buffer) < sort_key(right.buffer)
+    assert left_key < right_key
 
     # The right is more interesting
     if left.status < right.status:
@@ -126,16 +128,17 @@ class ParetoFront:
         self.__random = random
         self.__eviction_listeners = []
 
-        self.front = SortedList(key=lambda d: sort_key(d.buffer))
+        self.front = SortedList(key=lambda d: sort_key_ir(d.ir_nodes))
         self.__pending = None
 
     def add(self, data):
         """Attempts to add ``data`` to the pareto front. Returns True if
         ``data`` is now in the front, including if data is already in the
         collection, and False otherwise"""
-        data = data.as_result()
         if data.status < Status.VALID:
             return False
+
+        data = data.as_result()
 
         if not self.front:
             self.front.add(data)
@@ -178,8 +181,7 @@ class ParetoFront:
             failures = 0
             while i + 1 < len(front) and failures < 10:
                 j = self.__random.randrange(i + 1, len(front))
-                swap(front, j, len(front) - 1)
-                candidate = front.pop()
+                candidate = front.pop(j)
                 dom = dominance(data, candidate)
                 assert dom != DominanceRelation.RIGHT_DOMINATES
                 if dom == DominanceRelation.LEFT_DOMINATES:
@@ -196,7 +198,7 @@ class ParetoFront:
             dominators = [data]
 
             while i >= 0 and len(dominators) < 10:
-                swap(front, i, self.__random.randint(0, i))
+                front.swap(i, self.__random.randint(0, i))
 
                 candidate = front[i]
 
@@ -317,7 +319,7 @@ class ParetoOptimiser:
                     # If ``destination`` dominates ``source`` then ``source``
                     # must be dominated in the front - either ``destination`` is in
                     # the front, or it was not added to it because it was
-                    # dominated by something in it.,
+                    # dominated by something in it.
                     try:
                         self.front.front.remove(source)
                     except ValueError:

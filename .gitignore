@@ -11,8 +11,10 @@
 # generic build components
 
 .runtimes
-/hypothesis-python/branch-check
+/hypothesis-python/branch-check*
 /pythonpython3.*
+/pythonpypy3.*
+.pyodide-xbuildenv
 
 # python
 
@@ -32,7 +34,7 @@ htmlcov
 build
 dist
 .doctrees/
-.venv/
+.v*/
 
 # encrypted files
 secrets.tar
@@ -102,3 +104,5 @@ __pycache__
 
 HypothesisWorks.github.io.iml
 jekyll.log
+/website/output/
+/t.py

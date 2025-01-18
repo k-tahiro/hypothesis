@@ -230,7 +230,7 @@ specific tests.
 
 Optionally, you may define the environment variable to load a profile for you.
 This is the suggested pattern for running your tests on CI.
-The code below should run in a `conftest.py` or any setup/initialization section of your test suite.
+The code below should run in a ``conftest.py`` or any setup/initialization section of your test suite.
 If this variable is not defined the Hypothesis defined defaults will be loaded.
 
 .. code-block:: pycon
@@ -249,6 +249,28 @@ by your conftest you can load one with the command line option ``--hypothesis-pr
 
     $ pytest tests --hypothesis-profile <profile-name>
 
+
+Hypothesis comes with two built-in profiles, ``ci`` and ``default``.
+``ci`` is set up to have good defaults for running in a CI environment, so emphasizes determinism, while the
+``default`` settings are picked to be more likely to find bugs and to have a good workflow when used for local development.
+
+Hypothesis will automatically detect certain common CI environments and use the ci profile automatically
+when running in them.
+In particular, if you wish to use the ``ci`` profile, setting the ``CI`` environment variable will do this.
+
+This will still be the case if you register your own ci profile. For example, if you wanted to run more examples in CI, you might configure it as follows:
+
+.. code-block:: python
+
+    settings.register_profile(
+        "ci",
+        settings(
+            settings.get_profile("ci"),
+            max_examples=1000,
+        ),
+    )
+
+This will configure your CI to run 1000 examples per test rather than the default of 100, and this change will automatically be picked up when running on a CI server.
 
 .. _healthchecks:
 

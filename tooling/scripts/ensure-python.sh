@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+if [ -n "${CI:-}" ] ; then echo "::group::Ensure Python" ; fi
+
 set -o errexit
 set -o nounset
 set -x
@@ -23,7 +25,7 @@ source "$HERE/common.sh"
 VERSION="$1"
 TARGET=$(pythonloc "$VERSION")
 
-if [ ! -e "$TARGET/bin/python" ] ; then 
+if [ ! -e "$TARGET/bin/python" ] ; then
     mkdir -p "$BASE"
 
     LOCKFILE="$BASE/.install-lockfile"
@@ -47,7 +49,7 @@ if [ ! -e "$TARGET/bin/python" ] ; then
 
     if [ ! -d "$PYENV/.git" ]; then
       rm -rf "$PYENV"
-      git clone https://github.com/yyuu/pyenv.git "$PYENV"
+      git clone https://github.com/pyenv/pyenv.git "$PYENV"
     else
       back=$PWD
       cd "$PYENV"
@@ -60,7 +62,11 @@ if [ ! -e "$TARGET/bin/python" ] ; then
         if "$BASE/pyenv/plugins/python-build/bin/python-build" "$VERSION" "$TARGET" ; then
             exit 0
         fi
-        echo "Command failed. Retrying..."
+        echo "Command failed. For a possible solution, visit"
+        echo "https://github.com/pyenv/pyenv/wiki#suggested-build-environment."
+        echo "Retrying..."
         sleep $(( ( RANDOM % 10 )  + 1 )).$(( RANDOM % 100 ))s
     done
 fi
+
+if [ -n "${CI:-}" ] ; then echo "::endgroup::" ; fi

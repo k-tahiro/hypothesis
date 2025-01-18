@@ -13,6 +13,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import requests
@@ -30,6 +31,7 @@ BUILD_FILES = tuple(
     os.path.join(tools.ROOT, f)
     for f in ["tooling", "requirements", ".github", "hypothesis-python/tox.ini"]
 )
+TODAY = date.today().isoformat()
 
 
 def task(if_changed=()):
@@ -40,7 +42,7 @@ def task(if_changed=()):
         def wrapped(*args, **kwargs):
             if if_changed and tools.IS_PULL_REQUEST:
                 if not tools.has_changes(if_changed + BUILD_FILES):
-                    changed = ", ".join(if_changed)
+                    changed = ", ".join(map(str, if_changed))
                     print(f"Skipping task due to no changes in {changed}")
                     return
             fn(*args, **kwargs)
@@ -73,7 +75,7 @@ def codespell(*files):
 
 @task()
 def lint():
-    pip_tool("ruff", ".")
+    pip_tool("ruff", "check", ".")
     codespell(*(f for f in tools.all_files() if not f.endswith("by-domain.txt")))
 
 
@@ -207,8 +209,8 @@ def format():
             o.write("\n")
 
     codespell("--write-changes", *files_to_format, *doc_files_to_format)
-    pip_tool("ruff", "--fix-only", ".")
-    pip_tool("shed", *files_to_format, *doc_files_to_format)
+    pip_tool("ruff", "check", "--fix-only", ".")
+    pip_tool("shed", "--py39-plus", *files_to_format, *doc_files_to_format)
 
 
 VALID_STARTS = (HEADER.split()[0], "#!/usr/bin/env python")
@@ -265,26 +267,42 @@ def compile_requirements(*, upgrade=False):
             p = p.lower().replace("_", "-")
             if re.fullmatch(r"[a-z-]+", p):
                 assert p + "==" in out_pkgs, f"Package `{p}` deleted from {out_file}"
+        out_file.write_text(out_pkgs.replace(f"{tools.ROOT}/", ""))
 
 
 def update_python_versions():
     install.ensure_python(PYTHONS[ci_version])
-    cmd = "~/.cache/hypothesis-build-runtimes/pyenv/bin/pyenv install --list"
-    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE).stdout.decode()
+    where = os.path.expanduser("~/.cache/hypothesis-build-runtimes/pyenv/")
+    subprocess.run(
+        "git fetch && git reset --hard origin/master",
+        cwd=where,
+        shell=True,
+        capture_output=True,
+    )
+    cmd = "bin/pyenv install --list"
+    result = subprocess.run(
+        cmd, shell=True, stdout=subprocess.PIPE, cwd=where
+    ).stdout.decode()
     # pyenv reports available versions in chronological order, so we keep the newest
     # *unless* our current ends with a digit (is stable) and the candidate does not.
-    stable = re.compile(r".*3\.\d+.\d+$")
+    # (plus some special cases for the `t` suffix for free-threading builds)
+    stable = re.compile(r".*3\.\d+.\d+t?$")
     min_minor_version = re.search(
         r'python_requires=">= ?3.(\d+)"',
         Path("hypothesis-python/setup.py").read_text(encoding="utf-8"),
     ).group(1)
     best = {}
     for line in map(str.strip, result.splitlines()):
-        if m := re.match(r"(?:pypy)?3\.(?:[789]|\d\d)", line):
+        if m := re.match(r"(?:pypy)?3\.(?:9|\d\dt?)", line):
             key = m.group()
-            if stable.match(line) or not stable.match(best.get(key, line)):
-                if int(key.split(".")[-1]) >= int(min_minor_version):
-                    best[key] = line
+            curr = best.get(key, line)
+            if (
+                (stable.match(line) or not stable.match(curr))
+                and not (line.endswith("-dev") and not curr.endswith("-dev"))
+                and int(key.split(".")[-1].rstrip("t")) >= int(min_minor_version)
+                and key.endswith("t") == line.endswith(("t", "t-dev"))
+            ):
+                best[key] = line
 
     if best == PYTHONS:
         return
@@ -297,13 +315,92 @@ def update_python_versions():
     pip_tool("shed", str(thisfile))
 
     # Automatically sync ci_version with the version in build.sh
-    build_sh = pathlib.Path(tools.ROOT) / "build.sh"
+    build_sh = tools.ROOT / "build.sh"
     sh_before = build_sh.read_text(encoding="utf-8")
     sh_after = re.sub(r"3\.\d\d?\.\d\d?", best[ci_version], sh_before)
     if sh_before != sh_after:
         build_sh.unlink()  # so bash doesn't reload a modified file
         build_sh.write_text(sh_after, encoding="utf-8")
         build_sh.chmod(0o755)
+
+
+DJANGO_VERSIONS = {
+    "4.2": "4.2.17",
+    "5.0": "5.0.10",
+    "5.1": "5.1.4",
+}
+
+
+def update_django_versions():
+    # https://endoflife.date/django makes it easier to track these
+    releases = requests.get("https://endoflife.date/api/django.json").json()
+    versions = {r["cycle"]: r["latest"] for r in releases[::-1] if TODAY <= r["eol"]}
+
+    if versions == DJANGO_VERSIONS:
+        return
+
+    # Write the new mapping back to this file
+    thisfile = pathlib.Path(__file__)
+    before = thisfile.read_text(encoding="utf-8")
+    after = re.sub(
+        r"DJANGO_VERSIONS = \{[^{}]+\}",
+        "DJANGO_VERSIONS = " + repr(versions).replace("}", ",}"),
+        before,
+    )
+    thisfile.write_text(after, encoding="utf-8")
+    pip_tool("shed", str(thisfile))
+
+    # Update the minimum version in setup.py
+    setup_py = hp.BASE_DIR / "setup.py"
+    content = re.sub(
+        r"django>=\d+\.\d+",
+        f"django>={min(versions, key=float)}",
+        setup_py.read_text(encoding="utf-8"),
+    )
+    setup_py.write_text(content, encoding="utf-8")
+
+    # Automatically sync ci_version with the version in build.sh
+    tox_ini = hp.BASE_DIR / "tox.ini"
+    content = tox_ini.read_text(encoding="utf-8")
+    print(versions)
+    for short, full in versions.items():
+        content = re.sub(
+            rf"(pip install django==){short}\.\d+",
+            rf"\g<1>{full}",
+            content,
+        )
+    tox_ini.write_text(content, encoding="utf-8")
+
+
+def update_pyodide_versions():
+    vers_re = r"(\d+\.\d+\.\d+)"
+    all_versions = re.findall(
+        f"pyodide_build-{vers_re}-py3-none-any.whl",  # excludes pre-releases
+        requests.get("https://pypi.org/simple/pyodide-build/").text,
+    )
+    for pyodide_version in sorted(
+        # Don't just pick the most recent version; find the highest stable version.
+        set(all_versions),
+        key=lambda version: tuple(int(x) for x in version.split(".")),
+        reverse=True,
+    ):
+        makefile_url = f"https://raw.githubusercontent.com/pyodide/pyodide/{pyodide_version}/Makefile.envs"
+        match = re.search(
+            rf"export PYVERSION \?= {vers_re}\nexport PYODIDE_EMSCRIPTEN_VERSION \?= {vers_re}\n",
+            requests.get(makefile_url).text,
+        )
+        if match is not None:
+            python_version, emscripten_version = match.groups()
+            break
+    ci_file = tools.ROOT / ".github/workflows/main.yml"
+    config = ci_file.read_text(encoding="utf-8")
+    for name, var in [
+        ("PYODIDE", pyodide_version),
+        ("PYTHON", python_version),
+        ("EMSCRIPTEN", emscripten_version),
+    ]:
+        config = re.sub(f"{name}_VERSION: {vers_re}", f"{name}_VERSION: {var}", config)
+    ci_file.write_text(config, encoding="utf-8")
 
 
 def update_vendored_files():
@@ -317,15 +414,15 @@ def update_vendored_files():
     if fname.read_bytes().splitlines()[1:] != new.splitlines()[1:]:
         fname.write_bytes(new)
 
-    # Always require the latest version of the tzdata package
-    tz_url = "https://pypi.org/pypi/tzdata/json"
-    tzdata_version = requests.get(tz_url).json()["info"]["version"]
+    # Always require the most recent version of tzdata - we don't need to worry about
+    # pre-releases because tzdata is a 'latest data' package  (unlike pyodide-build).
+    # Our crosshair extra is research-grade, so we require latest versions there too.
     setup = pathlib.Path(hp.BASE_DIR, "setup.py")
-    new = re.sub(
-        r"tzdata>=(.+?) ",
-        f"tzdata>={tzdata_version} ",
-        setup.read_text(encoding="utf-8"),
-    )
+    new = setup.read_text(encoding="utf-8")
+    for pkgname in ("tzdata", "crosshair-tool", "hypothesis-crosshair"):
+        pkg_url = f"https://pypi.org/pypi/{pkgname}/json"
+        pkg_version = requests.get(pkg_url).json()["info"]["version"]
+        new = re.sub(rf"{pkgname}>=([a-z0-9.]+)", f"{pkgname}>={pkg_version}", new)
     setup.write_text(new, encoding="utf-8")
 
 
@@ -344,6 +441,8 @@ def upgrade_requirements():
         with open(hp.RELEASE_FILE, mode="w", encoding="utf-8") as f:
             f.write(f"RELEASE_TYPE: patch\n\n{msg}")
     update_python_versions()
+    update_pyodide_versions()
+    update_django_versions()
     subprocess.call(["git", "add", "."], cwd=tools.ROOT)
 
 
@@ -363,6 +462,16 @@ def documentation():
             ["git", "checkout", "docs/changes.rst", "src/hypothesis/version.py"],
             cwd=hp.HYPOTHESIS_PYTHON,
         )
+
+
+@task()
+def website():
+    subprocess.call(["pelican"], cwd=tools.ROOT / "website")
+
+
+@task()
+def live_website():
+    subprocess.call(["pelican", "--autoreload", "--listen"], cwd=tools.ROOT / "website")
 
 
 def run_tox(task, version, *args):
@@ -389,15 +498,16 @@ def run_tox(task, version, *args):
 # When a version is added or removed, manually update the env lists in tox.ini and
 # workflows/main.yml, and the `Programming Language ::` specifiers in setup.py
 PYTHONS = {
-    "3.8": "3.8.18",
-    "3.9": "3.9.18",
-    "3.10": "3.10.13",
-    "3.11": "3.11.5",
-    "3.12": "3.12-dev",
-    "3.13": "3.13-dev",
-    "pypy3.8": "pypy3.8-7.3.11",
-    "pypy3.9": "pypy3.9-7.3.12",
-    "pypy3.10": "pypy3.10-7.3.12",
+    "3.9": "3.9.21",
+    "3.10": "3.10.16",
+    "3.11": "3.11.11",
+    "3.12": "3.12.8",
+    "3.13": "3.13.1",
+    "3.13t": "3.13t-dev",
+    "3.14": "3.14.0a3",
+    "3.14t": "3.14t-dev",
+    "pypy3.9": "pypy3.9-7.3.16",
+    "pypy3.10": "pypy3.10-7.3.17",
 }
 ci_version = "3.10"  # Keep this in sync with GH Actions main.yml and .readthedocs.yml
 
@@ -443,9 +553,9 @@ def tox(*args):
     run_tox(*args)
 
 
-def standard_tox_task(name, *args, py=ci_version):
+def standard_tox_task(name, py=ci_version):
     TASKS["check-" + name] = python_tests(
-        lambda: run_tox(name, PYTHONS.get(py, py), *args)
+        lambda *args: run_tox(name, PYTHONS.get(py, py), *args)
     )
 
 
@@ -454,13 +564,19 @@ standard_tox_task("py39-pytest46", py="3.9")
 standard_tox_task("py39-pytest54", py="3.9")
 standard_tox_task("pytest62")
 
-for n in [32, 41, 42]:
-    standard_tox_task(f"django{n}")
+for n in DJANGO_VERSIONS:
+    standard_tox_task(f"django{n.replace('.', '')}")
 
-for n in [11, 12, 13, 14, 15, 20]:
+for n in [13, 14, 15, 20, 21, 22]:
     standard_tox_task(f"pandas{n}")
+standard_tox_task("py39-pandas11", py="3.9")
+standard_tox_task("py39-pandas12", py="3.9")
 
-standard_tox_task("py38-oldestnumpy", py="3.8")
+for kind in ("cover", "nocover", "niche", "custom"):
+    standard_tox_task(f"crosshair-{kind}")
+
+standard_tox_task("py39-oldestnumpy", py="3.9")
+standard_tox_task("numpy-nightly", py="3.12")
 
 standard_tox_task("coverage")
 standard_tox_task("conjecture-coverage")
@@ -484,7 +600,7 @@ def check_whole_repo_tests(*args):
     )
 
     if not args:
-        args = [tools.REPO_TESTS]
+        args = ["-n", "auto", tools.REPO_TESTS]
     subprocess.check_call([sys.executable, "-m", "pytest", *args])
 
 
@@ -533,7 +649,7 @@ def audit_rust_in_ruby():
 
 @task()
 def python(*args):
-    os.execv(sys.executable, (sys.executable,) + args)
+    os.execv(sys.executable, (sys.executable, *args))
 
 
 @task()

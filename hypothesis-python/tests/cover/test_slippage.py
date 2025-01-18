@@ -12,7 +12,7 @@ import pytest
 
 from hypothesis import Phase, assume, given, settings, strategies as st, target
 from hypothesis.database import InMemoryExampleDatabase
-from hypothesis.errors import Flaky
+from hypothesis.errors import FlakyFailure
 from hypothesis.internal.compat import ExceptionGroup
 from hypothesis.internal.conjecture.engine import MIN_TEST_CALLS
 
@@ -29,24 +29,25 @@ def capture_reports(test):
 
     return o.getvalue() + "\n\n".join(
         f"{e!r}\n" + "\n".join(getattr(e, "__notes__", []))
-        for e in (err.value,) + err.value.exceptions
+        for e in (err.value, *err.value.exceptions)
     )
 
 
 def test_raises_multiple_failures_with_varying_type():
-    target = [None]
+    target = None
 
-    @settings(database=None, max_examples=100)
+    @settings(database=None, max_examples=100, report_multiple_bugs=True)
     @given(st.integers())
     def test(i):
+        nonlocal target
         if abs(i) < 1000:
             return
-        if target[0] is None:
+        if target is None:
             # Ensure that we have some space to shrink into, so we can't
             # trigger an minimal example and mask the other exception type.
             assume(1003 < abs(i))
-            target[0] = i
-        exc_class = TypeError if target[0] == i else ValueError
+            target = i
+        exc_class = TypeError if target == i else ValueError
         raise exc_class
 
     output = capture_reports(test)
@@ -66,16 +67,17 @@ def test_shows_target_scores_with_multiple_failures():
 
 
 def test_raises_multiple_failures_when_position_varies():
-    target = [None]
+    target = None
 
-    @settings(max_examples=100)
+    @settings(max_examples=100, report_multiple_bugs=True)
     @given(st.integers())
     def test(i):
+        nonlocal target
         if abs(i) < 1000:
             return
-        if target[0] is None:
-            target[0] = i
-        if target[0] == i:
+        if target is None:
+            target = i
+        if target == i:
             raise ValueError("loc 1")
         else:
             raise ValueError("loc 2")
@@ -86,16 +88,19 @@ def test_raises_multiple_failures_when_position_varies():
 
 
 def test_replays_both_failing_values():
-    target = [None]
+    target = None
 
-    @settings(database=InMemoryExampleDatabase(), max_examples=500)
+    @settings(
+        database=InMemoryExampleDatabase(), max_examples=500, report_multiple_bugs=True
+    )
     @given(st.integers())
     def test(i):
+        nonlocal target
         if abs(i) < 1000:
             return
-        if target[0] is None:
-            target[0] = i
-        exc_class = TypeError if target[0] == i else ValueError
+        if target is None:
+            target = i
+        exc_class = TypeError if target == i else ValueError
         raise exc_class
 
     with pytest.raises(ExceptionGroup):
@@ -110,7 +115,9 @@ def test_replays_slipped_examples_once_initial_bug_is_fixed(fix):
     target = []
     bug_fixed = False
 
-    @settings(database=InMemoryExampleDatabase(), max_examples=500)
+    @settings(
+        database=InMemoryExampleDatabase(), max_examples=500, report_multiple_bugs=True
+    )
     @given(st.integers())
     def test(i):
         if abs(i) < 1000:
@@ -143,7 +150,7 @@ def test_garbage_collects_the_secondary_key():
 
     db = InMemoryExampleDatabase()
 
-    @settings(database=db, max_examples=500)
+    @settings(database=db, max_examples=500, report_multiple_bugs=True)
     @given(st.integers())
     def test(i):
         if bug_fixed:
@@ -176,64 +183,73 @@ def test_garbage_collects_the_secondary_key():
 
 
 def test_shrinks_both_failures():
-    first_has_failed = [False]
+    first_has_failed = False
     duds = set()
-    second_target = [None]
+    second_target = None
 
-    @settings(database=None, max_examples=1000)
-    @given(st.integers(min_value=0).map(int))
+    @settings(database=None, max_examples=1000, report_multiple_bugs=True)
+    @given(st.integers(min_value=0))
     def test(i):
+        nonlocal first_has_failed, duds, second_target
+
         if i >= 10000:
-            first_has_failed[0] = True
+            first_has_failed = True
             raise AssertionError
+
         assert i < 10000
-        if first_has_failed[0]:
-            if second_target[0] is None:
+        if first_has_failed:
+            if second_target is None:
                 for j in range(10000):
                     if j not in duds:
-                        second_target[0] = j
+                        second_target = j
                         break
-            assert i < second_target[0]
+            # to avoid flaky errors, don't error on an input that we previously
+            # passed.
+            if i not in duds:
+                assert i < second_target
         else:
             duds.add(i)
 
     output = capture_reports(test)
     assert_output_contains_failure(output, test, i=10000)
-    assert_output_contains_failure(output, test, i=second_target[0])
+    assert_output_contains_failure(output, test, i=second_target)
 
 
 def test_handles_flaky_tests_where_only_one_is_flaky():
     flaky_fixed = False
 
     target = []
-    flaky_failed_once = [False]
+    flaky_failed_once = False
 
-    @settings(database=InMemoryExampleDatabase(), max_examples=1000)
+    @settings(
+        database=InMemoryExampleDatabase(), max_examples=1000, report_multiple_bugs=True
+    )
     @given(st.integers())
     def test(i):
+        nonlocal flaky_failed_once
         if abs(i) < 1000:
             return
         if not target:
             target.append(i)
         if i == target[0]:
             raise TypeError
-        if flaky_failed_once[0] and not flaky_fixed:
+        if flaky_failed_once and not flaky_fixed:
             return
         if len(target) == 1:
             target.append(i)
         if i == target[1]:
-            flaky_failed_once[0] = True
+            flaky_failed_once = True
             raise ValueError
 
     with pytest.raises(ExceptionGroup) as err:
         test()
-    assert any(isinstance(e, Flaky) for e in err.value.exceptions)
+    assert any(isinstance(e, FlakyFailure) for e in err.value.exceptions)
 
     flaky_fixed = True
 
     with pytest.raises(ExceptionGroup) as err:
         test()
-    assert not any(isinstance(e, Flaky) for e in err.value.exceptions)
+    assert not any(isinstance(e, FlakyFailure) for e in err.value.exceptions)
 
 
 @pytest.mark.parametrize("allow_multi", [True, False])
@@ -258,10 +274,14 @@ def test_can_disable_multiple_error_reporting(allow_multi):
 
 
 def test_finds_multiple_failures_in_generation():
-    special = []
+    special = None
     seen = set()
 
-    @settings(phases=[Phase.generate, Phase.shrink], max_examples=100)
+    @settings(
+        phases=[Phase.generate, Phase.shrink],
+        max_examples=100,
+        report_multiple_bugs=True,
+    )
     @given(st.integers(min_value=0))
     def test(x):
         """Constructs a test so the 10th largeish example we've seen is a
@@ -269,14 +289,19 @@ def test_finds_multiple_failures_in_generation():
         is larger than it is a different failure. This demonstrates that we
         can keep generating larger examples and still find new bugs after that
         point."""
+        nonlocal special
         if not special:
-            if len(seen) >= 10 and x <= 1000:
-                special.append(x)
+            # don't mark duplicate inputs as special and thus erroring, to avoid
+            # flakiness where we passed the input the first time but failed it the
+            # second.
+            if len(seen) >= 10 and x <= 1000 and x not in seen:
+                special = x
             else:
                 seen.add(x)
+
         if special:
-            assert x in seen or (x <= special[0])
-        assert x not in special
+            assert x in seen or x <= special
+        assert x != special
 
     with pytest.raises(ExceptionGroup):
         test()

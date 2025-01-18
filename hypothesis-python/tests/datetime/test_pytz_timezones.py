@@ -14,17 +14,12 @@ import warnings
 
 import pytest
 
-from hypothesis import assume, given
-from hypothesis.errors import InvalidArgument
+from hypothesis import assume, given, strategies as st
+from hypothesis.errors import InvalidArgument, StopTest
 from hypothesis.strategies import data, datetimes, just, sampled_from, times
 from hypothesis.strategies._internal.datetime import datetime_does_not_exist
 
-from tests.common.debug import (
-    assert_all_examples,
-    assert_can_trigger_event,
-    find_any,
-    minimal,
-)
+from tests.common.debug import assert_all_examples, find_any, minimal
 
 with warnings.catch_warnings():
     if sys.version_info[:2] >= (3, 12):
@@ -116,10 +111,25 @@ def test_time_bounds_must_be_naive(name, val):
     ],
 )
 def test_can_trigger_error_in_draw_near_boundary(bound):
-    assert_can_trigger_event(
-        datetimes(**bound, timezones=timezones()),
-        lambda event: "Failed to draw a datetime" in event,
-    )
+    found = False
+
+    # this would be better written with find_any, but I couldn't get rewriting
+    # with st.composite and assuming the event condition to work.
+    # https://github.com/HypothesisWorks/hypothesis/pull/4229#discussion_r1907993831
+    @given(st.data())
+    def f(data):
+        try:
+            data.draw(datetimes(**bound, timezones=timezones()))
+        except StopTest:
+            pass
+        if "Failed to draw a datetime" in data.conjecture_data.events.get(
+            "invalid because", ""
+        ):
+            nonlocal found
+            found = True
+
+    f()
+    assert found
 
 
 @given(data(), datetimes(), datetimes())

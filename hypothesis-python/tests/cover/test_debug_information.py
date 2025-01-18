@@ -13,13 +13,16 @@ import re
 import pytest
 
 from hypothesis import Verbosity, given, settings, strategies as st
+from hypothesis.database import InMemoryExampleDatabase
 
 from tests.common.utils import capture_out
 
 
 def test_reports_passes():
     @given(st.integers())
-    @settings(verbosity=Verbosity.debug, max_examples=1000)
+    @settings(
+        verbosity=Verbosity.debug, max_examples=1000, database=InMemoryExampleDatabase()
+    )
     def test(i):
         assert i < 10
 
@@ -29,7 +32,7 @@ def test_reports_passes():
 
     value = out.getvalue()
 
-    assert "minimize_individual_blocks" in value
+    assert "minimize_individual_nodes" in value
     assert "calls" in value
     assert "shrinks" in value
 

@@ -16,7 +16,10 @@ from functools import reduce
 import pytest
 
 from hypothesis import assume, given, reject, strategies as st
-from hypothesis.strategies._internal.regex import base_regex_strategy
+from hypothesis.strategies._internal.regex import (
+    IncompatibleWithAlphabet,
+    base_regex_strategy,
+)
 
 
 @st.composite
@@ -63,7 +66,7 @@ FLAGS = st.sets(
 @given(st.data())
 def test_conservative_regex_are_correct_by_construction(data):
     pattern = re.compile(data.draw(CONSERVATIVE_REGEX), flags=data.draw(FLAGS))
-    result = data.draw(base_regex_strategy(pattern))
+    result = data.draw(base_regex_strategy(pattern, alphabet=st.characters()))
     # We'll skip "capital I with dot above" due to awful casefolding behaviour
     # and "latin small letter dotless i" for the same reason.
     assume({"ı", "İ"}.isdisjoint(pattern.pattern + result))
@@ -85,7 +88,17 @@ def test_fuzz_stuff(data):
         # Possible nested sets, e.g. "[[", trigger a FutureWarning
         reject()
 
-    ex = data.draw(st.from_regex(regex))
+    try:
+        ex = data.draw(st.from_regex(regex))
+    except IncompatibleWithAlphabet:
+        if isinstance(pattern, str) and flags & re.ASCII:
+            with pytest.raises(UnicodeEncodeError):
+                pattern.encode("ascii")
+            regex = re.compile(pattern, flags=flags ^ re.ASCII)
+            ex = data.draw(st.from_regex(regex))
+        else:
+            raise
+
     assert regex.search(ex)
 
 

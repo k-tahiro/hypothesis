@@ -12,26 +12,36 @@ import os
 import re
 import tempfile
 import zipfile
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from shutil import make_archive, rmtree
-from typing import Iterator, Optional, Tuple
+from typing import Optional
 
 import pytest
 
-from hypothesis import given, settings, strategies as st
+from hypothesis import configuration, example, given, settings, strategies as st
 from hypothesis.database import (
+    BackgroundWriteDatabase,
     DirectoryBasedExampleDatabase,
     ExampleDatabase,
     GitHubArtifactDatabase,
     InMemoryExampleDatabase,
     MultiplexedDatabase,
     ReadOnlyDatabase,
+    ir_from_bytes,
+    ir_to_bytes,
 )
 from hypothesis.errors import HypothesisWarning
+from hypothesis.internal.compat import WINDOWS
+from hypothesis.internal.conjecture.choice import choice_equal
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, rule
 from hypothesis.strategies import binary, lists, tuples
+from hypothesis.utils.conventions import not_set
+
+from tests.common.utils import skipif_emscripten
+from tests.conjecture.common import ir, ir_nodes
 
 small_settings = settings(max_examples=50)
 
@@ -63,29 +73,23 @@ def test_default_database_is_in_memory():
     assert isinstance(ExampleDatabase(), InMemoryExampleDatabase)
 
 
-def test_default_on_disk_database_is_dir(tmpdir):
+def test_default_on_disk_database_is_dir(tmp_path):
     assert isinstance(
-        ExampleDatabase(tmpdir.join("foo")), DirectoryBasedExampleDatabase
+        ExampleDatabase(tmp_path.joinpath("foo")), DirectoryBasedExampleDatabase
     )
 
 
-def test_selects_directory_based_if_already_directory(tmpdir):
-    path = str(tmpdir.join("hi.sqlite3"))
-    DirectoryBasedExampleDatabase(path).save(b"foo", b"bar")
-    assert isinstance(ExampleDatabase(path), DirectoryBasedExampleDatabase)
-
-
-def test_does_not_error_when_fetching_when_not_exist(tmpdir):
-    db = DirectoryBasedExampleDatabase(tmpdir.join("examples"))
+def test_does_not_error_when_fetching_when_not_exist(tmp_path):
+    db = DirectoryBasedExampleDatabase(tmp_path / "examples")
     db.fetch(b"foo")
 
 
 @pytest.fixture(scope="function", params=["memory", "directory"])
-def exampledatabase(request, tmpdir):
+def exampledatabase(request, tmp_path):
     if request.param == "memory":
         return ExampleDatabase()
     assert request.param == "directory"
-    return DirectoryBasedExampleDatabase(str(tmpdir.join("examples")))
+    return DirectoryBasedExampleDatabase(tmp_path / "examples")
 
 
 def test_can_delete_a_key_that_is_not_present(exampledatabase):
@@ -120,10 +124,9 @@ def test_an_absent_value_is_present_after_it_moves_to_self(exampledatabase):
     assert next(exampledatabase.fetch(b"a")) == b"b"
 
 
-def test_two_directory_databases_can_interact(tmpdir):
-    path = str(tmpdir)
-    db1 = DirectoryBasedExampleDatabase(path)
-    db2 = DirectoryBasedExampleDatabase(path)
+def test_two_directory_databases_can_interact(tmp_path):
+    db1 = DirectoryBasedExampleDatabase(tmp_path)
+    db2 = DirectoryBasedExampleDatabase(tmp_path)
     db1.save(b"foo", b"bar")
     assert list(db2.fetch(b"foo")) == [b"bar"]
     db2.save(b"foo", b"bar")
@@ -131,13 +134,12 @@ def test_two_directory_databases_can_interact(tmpdir):
     assert sorted(db1.fetch(b"foo")) == [b"bar", b"baz"]
 
 
-def test_can_handle_disappearing_files(tmpdir, monkeypatch):
-    path = str(tmpdir)
-    db = DirectoryBasedExampleDatabase(path)
+def test_can_handle_disappearing_files(tmp_path, monkeypatch):
+    db = DirectoryBasedExampleDatabase(tmp_path)
     db.save(b"foo", b"bar")
     base_listdir = os.listdir
     monkeypatch.setattr(
-        os, "listdir", lambda d: base_listdir(d) + ["this-does-not-exist"]
+        os, "listdir", lambda d: [*base_listdir(d), "this-does-not-exist"]
     )
     assert list(db.fetch(b"foo")) == [b"bar"]
 
@@ -194,7 +196,7 @@ def test_ga_require_readonly_wrapping():
 @contextmanager
 def ga_empty_artifact(
     date: Optional[datetime] = None, path: Optional[Path] = None
-) -> Iterator[Tuple[Path, Path]]:
+) -> Iterator[tuple[Path, Path]]:
     """Creates an empty GitHub artifact."""
     if date:
         timestamp = date.isoformat().replace(":", "_")
@@ -384,7 +386,7 @@ class GitHubArtifactMocks(RuleBasedStateMachine):
         self._archive_directory_db()
         self.zip_db._initialize_db()
 
-    def _make_zip(self, tree_path: Path, zip_path: Path, skip_empty_dir=False):
+    def _make_zip(self, tree_path: Path, zip_path: Path):
         destination = zip_path.parent.absolute() / zip_path.stem
         make_archive(
             str(destination),
@@ -434,3 +436,56 @@ def test_gadb_coverage():
     state = GitHubArtifactMocks()
     state.save(b"key", b"value")
     state.values_agree(b"key")
+
+
+@pytest.mark.parametrize("dirs", [[], ["subdir"]])
+def test_database_directory_inaccessible(dirs, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        configuration, "__hypothesis_home_directory", tmp_path.joinpath(*dirs)
+    )
+    tmp_path.chmod(0o000)
+    with (
+        nullcontext()
+        if WINDOWS
+        else pytest.warns(HypothesisWarning, match=".*the default location is unusable")
+    ):
+        database = ExampleDatabase(not_set)
+    database.save(b"fizz", b"buzz")
+
+
+@skipif_emscripten
+def test_background_write_database():
+    db = BackgroundWriteDatabase(InMemoryExampleDatabase())
+    db.save(b"a", b"b")
+    db.save(b"a", b"c")
+    db.save(b"a", b"d")
+    assert set(db.fetch(b"a")) == {b"b", b"c", b"d"}
+
+    db.move(b"a", b"a2", b"b")
+    assert set(db.fetch(b"a")) == {b"c", b"d"}
+    assert set(db.fetch(b"a2")) == {b"b"}
+
+    db.delete(b"a", b"c")
+    assert set(db.fetch(b"a")) == {b"d"}
+
+
+@given(lists(ir_nodes()))
+# covering examples
+@example(ir(True))
+@example(ir(1))
+@example(ir(0.0))
+@example(ir(-0.0))
+@example(ir("a"))
+@example(ir(b"a"))
+@example(ir(b"a" * 50))
+def test_ir_nodes_roundtrips(nodes1):
+    s1 = ir_to_bytes([n.value for n in nodes1])
+    assert isinstance(s1, bytes)
+    ir2 = ir_from_bytes(s1)
+    assert len(nodes1) == len(ir2)
+
+    for n1, v2 in zip(nodes1, ir2):
+        assert choice_equal(n1.value, v2)
+
+    s2 = ir_to_bytes(ir2)
+    assert s1 == s2

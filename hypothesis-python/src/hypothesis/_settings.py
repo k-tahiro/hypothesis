@@ -19,8 +19,9 @@ import datetime
 import inspect
 import os
 import warnings
+from collections.abc import Collection
 from enum import Enum, EnumMeta, IntEnum, unique
-from typing import TYPE_CHECKING, Any, Collection, Dict, List, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, TypeVar, Union
 
 import attr
 
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
 
 __all__ = ["settings"]
 
-all_settings: Dict[str, "Setting"] = {}
+all_settings: dict[str, "Setting"] = {}
 
 T = TypeVar("T")
 
@@ -62,6 +63,7 @@ class settingsProperty:
                     from hypothesis.database import ExampleDatabase
 
                     result = ExampleDatabase(not_set)
+                assert result is not not_set
                 return result
             except KeyError:
                 raise AttributeError(self.name) from None
@@ -95,7 +97,7 @@ class settingsMeta(type):
         v = default_variable.value
         if v is not None:
             return v
-        if hasattr(settings, "_current_profile"):
+        if getattr(settings, "_current_profile", None) is not None:
             settings.load_profile(settings._current_profile)
             assert default_variable.value is not None
         return default_variable.value
@@ -128,8 +130,9 @@ class settings(metaclass=settingsMeta):
     """
 
     __definitions_are_locked = False
-    _profiles: Dict[str, "settings"] = {}
+    _profiles: ClassVar[dict[str, "settings"]] = {}
     __module__ = "hypothesis"
+    _current_profile = None
 
     def __getattr__(self, name):
         if name in all_settings:
@@ -155,6 +158,7 @@ class settings(metaclass=settingsMeta):
         suppress_health_check: Collection["HealthCheck"] = not_set,  # type: ignore
         deadline: Union[int, float, datetime.timedelta, None] = not_set,  # type: ignore
         print_blob: bool = not_set,  # type: ignore
+        backend: str = not_set,  # type: ignore
     ) -> None:
         if parent is not None:
             check_type(settings, parent, "parent")
@@ -279,7 +283,13 @@ class settings(metaclass=settingsMeta):
         raise AttributeError("settings objects are immutable")
 
     def __repr__(self):
-        bits = sorted(f"{name}={getattr(self, name)!r}" for name in all_settings)
+        from hypothesis.internal.conjecture.data import AVAILABLE_PROVIDERS
+
+        bits = sorted(
+            f"{name}={getattr(self, name)!r}"
+            for name in all_settings
+            if (name != "backend" or len(AVAILABLE_PROVIDERS) > 1)  # experimental
+        )
         return "settings({})".format(", ".join(bits))
 
     def show_changed(self):
@@ -307,9 +317,15 @@ class settings(metaclass=settingsMeta):
         :class:`~hypothesis.settings`: optional ``parent`` settings, and
         keyword arguments for each setting that will be set differently to
         parent (or settings.default, if parent is None).
+
+        If you register a profile that has already been defined and that profile
+        is the currently loaded profile, the new changes will take effect immediately,
+        and do not require reloading the profile.
         """
         check_type(str, name, "name")
         settings._profiles[name] = settings(parent=parent, **kwargs)
+        if settings._current_profile == name:
+            settings.load_profile(name)
 
     @staticmethod
     def get_profile(name: str) -> "settings":
@@ -335,8 +351,7 @@ class settings(metaclass=settingsMeta):
 
 @contextlib.contextmanager
 def local_settings(s):
-    default_context_manager = default_variable.with_value(s)
-    with default_context_manager:
+    with default_variable.with_value(s):
         yield s
 
 
@@ -378,7 +393,7 @@ running time against the chance of missing a bug.
 If you are writing one-off tests, running tens of thousands of examples is
 quite reasonable as Hypothesis may miss uncommon bugs with default settings.
 For very complex code, we have observed Hypothesis finding novel bugs after
-*several million* examples while testing :pypi:`SymPy`.
+*several million* examples while testing :pypi:`SymPy <sympy>`.
 If you are running more than 100k examples for a test, consider using our
 :ref:`integration for coverage-guided fuzzing <fuzz_one_input>` - it really
 shines when given minutes or hours to run.
@@ -400,6 +415,8 @@ This allows you to `check for regressions and look for bugs
 :ref:`separate settings profiles <settings_profiles>` - for example running
 quick deterministic tests on every commit, and a longer non-deterministic
 nightly testing run.
+
+By default when running on CI, this will be set to True.
 """,
 )
 
@@ -463,10 +480,10 @@ class HealthCheck(Enum, metaclass=HealthCheckMeta):
         return f"{self.__class__.__name__}.{self.name}"
 
     @classmethod
-    def all(cls) -> List["HealthCheck"]:
+    def all(cls) -> list["HealthCheck"]:
         # Skipping of deprecated attributes is handled in HealthCheckMeta.__iter__
         note_deprecation(
-            "`Healthcheck.all()` is deprecated; use `list(HealthCheck)` instead.",
+            "`HealthCheck.all()` is deprecated; use `list(HealthCheck)` instead.",
             since="2023-04-16",
             has_codemod=True,
             stacklevel=1,
@@ -520,6 +537,18 @@ class HealthCheck(Enum, metaclass=HealthCheckMeta):
     This check requires the :ref:`Hypothesis pytest plugin<pytest-plugin>`,
     which is enabled by default when running Hypothesis inside pytest."""
 
+    differing_executors = 10
+    """Checks if :func:`@given <hypothesis.given>` has been applied to a test
+    which is executed by different :ref:`executors<custom-function-execution>`.
+    If your test function is defined as a method on a class, that class will be
+    your executor, and subclasses executing an inherited test is a common way
+    for things to go wrong.
+
+    The correct fix is often to bring the executor instance under the control
+    of hypothesis by explicit parametrization over, or sampling from,
+    subclasses, or to refactor so that :func:`@given <hypothesis.given>` is
+    specified on leaf subclasses."""
+
 
 @unique
 class Verbosity(IntEnum):
@@ -550,9 +579,7 @@ def _validate_phases(phases):
 
 settings._define_setting(
     "phases",
-    # We leave the `explain` phase disabled by default, for speed and brevity
-    # TODO: consider default-enabling this in CI?
-    default=_validate_phases(set(Phase) - {Phase.explain}),
+    default=tuple(Phase),
     description=(
         "Control which phases should be run. "
         "See :ref:`the full documentation for more details <phases>`"
@@ -665,6 +692,8 @@ errors (but will not necessarily be if close to the deadline, to allow some
 variability in test run time).
 
 Set this to ``None`` to disable this behaviour entirely.
+
+By default when running on CI, this will be set to None.
 """,
 )
 
@@ -677,13 +706,38 @@ def is_in_ci() -> bool:
 
 settings._define_setting(
     "print_blob",
-    default=is_in_ci(),
-    show_default=False,
+    default=False,
     options=(True, False),
     description="""
 If set to ``True``, Hypothesis will print code for failing examples that can be used with
 :func:`@reproduce_failure <hypothesis.reproduce_failure>` to reproduce the failing example.
-The default is ``True`` if the ``CI`` or ``TF_BUILD`` env vars are set, ``False`` otherwise.
+""",
+)
+
+
+def _backend_validator(value):
+    from hypothesis.internal.conjecture.data import AVAILABLE_PROVIDERS
+
+    if value not in AVAILABLE_PROVIDERS:
+        if value == "crosshair":  # pragma: no cover
+            install = '`pip install "hypothesis[crosshair]"` and try again.'
+            raise InvalidArgument(f"backend={value!r} is not available.  {install}")
+        raise InvalidArgument(
+            f"backend={value!r} is not available - maybe you need to install a plugin?"
+            f"\n    Installed backends: {sorted(AVAILABLE_PROVIDERS)!r}"
+        )
+    return value
+
+
+settings._define_setting(
+    "backend",
+    default="hypothesis",
+    show_default=False,
+    validator=_backend_validator,
+    description="""
+EXPERIMENTAL AND UNSTABLE - see :ref:`alternative-backends`.
+The importable name of a backend which Hypothesis should use to generate primitive
+types.  We aim to support heuristic-random, solver-based, and fuzzing-based backends.
 """,
 )
 
@@ -694,7 +748,7 @@ def note_deprecation(
     message: str, *, since: str, has_codemod: bool, stacklevel: int = 0
 ) -> None:
     if since != "RELEASEDAY":
-        date = datetime.datetime.strptime(since, "%Y-%m-%d").date()
+        date = datetime.date.fromisoformat(since)
         assert datetime.date(2021, 1, 1) <= date
     if has_codemod:
         message += (
@@ -706,6 +760,23 @@ def note_deprecation(
 
 settings.register_profile("default", settings())
 settings.load_profile("default")
+
+assert settings.default is not None
+
+CI = settings(
+    derandomize=True,
+    deadline=None,
+    database=None,
+    print_blob=True,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+
+settings.register_profile("ci", CI)
+
+
+if is_in_ci():
+    settings.load_profile("ci")
+
 assert settings.default is not None
 
 

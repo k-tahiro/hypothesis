@@ -12,7 +12,6 @@ import warnings
 from importlib import import_module
 from os import getenv
 from types import ModuleType, SimpleNamespace
-from typing import List, Tuple
 
 import pytest
 
@@ -35,7 +34,8 @@ if test_version_option != "default" and test_version_option not in NOMINAL_VERSI
         f"HYPOTHESIS_TEST_ARRAY_API_VERSION='{test_version_option}' is not "
         f"'default' or a valid api_version {NOMINAL_VERSIONS}."
     )
-with pytest.warns(HypothesisWarning):
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=HypothesisWarning)
     mock_version = "draft" if test_version_option == "default" else test_version_option
     mock_xps = make_strategies_namespace(mock_xp, api_version=mock_version)
 api_version = None if test_version_option == "default" else test_version_option
@@ -46,7 +46,7 @@ class InvalidArgumentWarning(UserWarning):
 
 
 name_to_entry_point = installed_array_modules()
-xp_and_xps_pairs: List[Tuple[ModuleType, SimpleNamespace]] = []
+xp_and_xps_pairs: list[tuple[ModuleType, SimpleNamespace]] = []
 with warnings.catch_warnings():
     # We ignore all warnings here as many array modules warn on import. Ideally
     # we would just ignore ImportWarning, but no one seems to use it!

@@ -1,12 +1,14 @@
-git+https://github.com/psf/black.git@eedfc3832290b3a32825b3c0f2dfa3f3d7ee9d1c
+annotated-types
+black
 click
-coverage
 dpcontracts
 fakeredis
 lark
 libcst
 numpy
 pandas
+pyarrow  # Silence warning from Pandas >=2.2, <3 - see https://github.com/pandas-dev/pandas/issues/54466
+pytest-cov
 python-dateutil
 pytz
 typing-extensions

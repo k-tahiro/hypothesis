@@ -9,7 +9,7 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 from importlib.metadata import EntryPoint, entry_points  # type: ignore
-from typing import Dict
+from typing import Literal
 
 import pytest
 
@@ -23,9 +23,9 @@ from hypothesis.internal.floats import next_up
 
 __all__ = [
     "MIN_VER_FOR_COMPLEX",
-    "installed_array_modules",
-    "flushes_to_zero",
     "dtype_name_params",
+    "flushes_to_zero",
+    "installed_array_modules",
 ]
 
 
@@ -34,7 +34,7 @@ if len(RELEASED_VERSIONS) > 1:
     assert MIN_VER_FOR_COMPLEX == RELEASED_VERSIONS[1]
 
 
-def installed_array_modules() -> Dict[str, EntryPoint]:
+def installed_array_modules() -> dict[str, EntryPoint]:
     """Returns a dictionary of array module names paired to their entry points
 
     A convenience wrapper for importlib.metadata.entry_points(). It has the
@@ -47,12 +47,12 @@ def installed_array_modules() -> Dict[str, EntryPoint]:
     except TypeError:
         # The select interface for entry_points was introduced in py3.10,
         # supplanting its dict interface. We fallback to the dict interface so
-        # we can still find entry points in py3.8 and py3.9.
+        # we can still find entry points in py3.9.
         eps = entry_points().get("array_api", [])
     return {ep.name: ep for ep in eps}
 
 
-def flushes_to_zero(xp, width: int) -> bool:
+def flushes_to_zero(xp, width: Literal[32, 64]) -> bool:
     """Infer whether build of array module has its float dtype of the specified
     width flush subnormals to zero
 
@@ -65,7 +65,7 @@ def flushes_to_zero(xp, width: int) -> bool:
     return bool(xp.asarray(next_up(0.0, width=width), dtype=dtype) == 0)
 
 
-dtype_name_params = ["bool"] + list(REAL_NAMES)
+dtype_name_params = ["bool", *REAL_NAMES]
 for name in COMPLEX_NAMES:
     param = pytest.param(name, marks=pytest.mark.xp_min_version(MIN_VER_FOR_COMPLEX))
     dtype_name_params.append(param)

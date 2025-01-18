@@ -32,6 +32,7 @@ PYTHON_TESTS = HYPOTHESIS_PYTHON / "tests"
 DOMAINS_LIST = PYTHON_SRC / "hypothesis" / "vendor" / "tlds-alpha-by-domain.txt"
 
 RELEASE_FILE = HYPOTHESIS_PYTHON / "RELEASE.rst"
+RELEASE_SAMPLE_FILE = HYPOTHESIS_PYTHON / "RELEASE-sample.rst"
 
 assert PYTHON_SRC.exists()
 
@@ -52,6 +53,10 @@ def has_release():
     return RELEASE_FILE.exists()
 
 
+def has_release_sample():
+    return RELEASE_SAMPLE_FILE.exists()
+
+
 def parse_release_file():
     return rm.parse_release_file(RELEASE_FILE)
 
@@ -60,20 +65,19 @@ def has_source_changes():
     return tools.has_changes([PYTHON_SRC])
 
 
-def build_docs(builder="html"):
+def build_docs(*, builder="html", only=()):
     # See https://www.sphinx-doc.org/en/stable/man/sphinx-build.html
     # (unfortunately most options only have the short flag version)
     tools.scripts.pip_tool(
         "sphinx-build",
-        "-n",
         "-W",
-        "--keep-going",
         "-T",
         "-E",
         "-b",
         builder,
         "docs",
         "docs/_build/" + builder,
+        *only,
         cwd=HYPOTHESIS_PYTHON,
     )
 
@@ -185,7 +189,7 @@ def upload_distribution():
 
     # Construct plain-text + markdown version of this changelog entry,
     # with link to canonical source.
-    build_docs(builder="text")
+    build_docs(builder="text", only=["docs/changes.rst"])
     textfile = os.path.join(HYPOTHESIS_PYTHON, "docs", "_build", "text", "changes.txt")
     with open(textfile, encoding="utf-8") as f:
         lines = f.readlines()
@@ -203,7 +207,7 @@ def upload_distribution():
         "https://api.github.com/repos/HypothesisWorks/hypothesis/releases",
         headers={
             "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer: {os.environ['GH_TOKEN']}",
+            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
             "X-GitHub-Api-Version": "2022-11-28",
         },
         json={
@@ -232,7 +236,7 @@ def latest_version():
 
     for t in tools.tags():
         if t.startswith(PYTHON_TAG_PREFIX):
-            t = t[len(PYTHON_TAG_PREFIX) :]
+            t = t.removeprefix(PYTHON_TAG_PREFIX)
         else:
             continue
         assert t == t.strip()

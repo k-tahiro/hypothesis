@@ -10,20 +10,15 @@
 
 import math
 import sys
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from numbers import Real
 from types import SimpleNamespace
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Iterable,
-    Iterator,
-    List,
     Literal,
-    Mapping,
     NamedTuple,
     Optional,
-    Sequence,
-    Tuple,
-    Type,
     TypeVar,
     Union,
     get_args,
@@ -60,15 +55,18 @@ from hypothesis.internal.validation import (
 from hypothesis.strategies._internal.strategies import check_strategy
 from hypothesis.strategies._internal.utils import defines_strategy
 
+if TYPE_CHECKING:
+    from typing import TypeAlias
+
 __all__ = [
     "make_strategies_namespace",
 ]
 
 
-RELEASED_VERSIONS = ("2021.12", "2022.12")
-NOMINAL_VERSIONS = RELEASED_VERSIONS + ("draft",)
+RELEASED_VERSIONS = ("2021.12", "2022.12", "2023.12")
+NOMINAL_VERSIONS = (*RELEASED_VERSIONS, "draft")
 assert sorted(NOMINAL_VERSIONS) == list(NOMINAL_VERSIONS)  # sanity check
-NominalVersion = Literal["2021.12", "2022.12", "draft"]
+NominalVersion = Literal["2021.12", "2022.12", "2023.12", "draft"]
 assert get_args(NominalVersion) == NOMINAL_VERSIONS  # sanity check
 
 
@@ -79,13 +77,13 @@ FLOAT_NAMES = ("float32", "float64")
 REAL_NAMES = ALL_INT_NAMES + FLOAT_NAMES
 COMPLEX_NAMES = ("complex64", "complex128")
 NUMERIC_NAMES = REAL_NAMES + COMPLEX_NAMES
-DTYPE_NAMES = ("bool",) + NUMERIC_NAMES
+DTYPE_NAMES = ("bool", *NUMERIC_NAMES)
 
 DataType = TypeVar("DataType")
 
 
 @check_function
-def check_xp_attributes(xp: Any, attributes: List[str]) -> None:
+def check_xp_attributes(xp: Any, attributes: list[str]) -> None:
     missing_attrs = [attr for attr in attributes if not hasattr(xp, attr)]
     if len(missing_attrs) > 0:
         f_attrs = ", ".join(missing_attrs)
@@ -96,7 +94,7 @@ def check_xp_attributes(xp: Any, attributes: List[str]) -> None:
 
 def partition_attributes_and_stubs(
     xp: Any, attributes: Iterable[str]
-) -> Tuple[List[Any], List[str]]:
+) -> tuple[list[Any], list[str]]:
     non_stubs = []
     stubs = []
     for attr in attributes:
@@ -108,7 +106,7 @@ def partition_attributes_and_stubs(
     return non_stubs, stubs
 
 
-def warn_on_missing_dtypes(xp: Any, stubs: List[str]) -> None:
+def warn_on_missing_dtypes(xp: Any, stubs: list[str]) -> None:
     f_stubs = ", ".join(stubs)
     warn(
         f"Array module {xp.__name__} does not have the following "
@@ -120,7 +118,7 @@ def warn_on_missing_dtypes(xp: Any, stubs: List[str]) -> None:
 
 def find_castable_builtin_for_dtype(
     xp: Any, api_version: NominalVersion, dtype: DataType
-) -> Type[Union[bool, int, float, complex]]:
+) -> type[Union[bool, int, float, complex]]:
     """Returns builtin type which can have values that are castable to the given
     dtype, according to :xp-ref:`type promotion rules <type_promotion.html>`.
 
@@ -278,7 +276,7 @@ def _from_dtype(
         if allow_subnormal is not None:
             kw["allow_subnormal"] = allow_subnormal
         else:
-            subnormal = next_down(finfo.smallest_normal, width=finfo.bits)
+            subnormal = next_down(float(finfo.smallest_normal), width=finfo.bits)
             ftz = bool(xp.asarray(subnormal, dtype=dtype) == 0)
             if ftz:
                 kw["allow_subnormal"] = False
@@ -299,7 +297,7 @@ def _from_dtype(
         # complex array, in case complex arrays have different FTZ behaviour
         # than arrays of the respective composite float.
         if allow_subnormal is None:
-            subnormal = next_down(finfo.smallest_normal, width=finfo.bits)
+            subnormal = next_down(float(finfo.smallest_normal), width=finfo.bits)
             x = xp.asarray(complex(subnormal, subnormal), dtype=dtype)
             builtin_x = complex(x)
             allow_subnormal = builtin_x.real != 0 and builtin_x.imag != 0
@@ -418,14 +416,14 @@ class ArrayStrategy(st.SearchStrategy):
             seen = set()
 
             while elements.more():
-                i = cu.integer_range(data, 0, self.array_size - 1)
+                i = data.draw_integer(0, self.array_size - 1)
                 if i in assigned:
-                    elements.reject()
+                    elements.reject("chose an array index we've already used")
                     continue
                 val = data.draw(self.elements_strategy)
                 if self.unique:
                     if val in seen:
-                        elements.reject()
+                        elements.reject("chose an element we've already used")
                         continue
                     else:
                         seen.add(val)
@@ -587,7 +585,7 @@ def _arrays(
 
 
 @check_function
-def check_dtypes(xp: Any, dtypes: List[DataType], stubs: List[str]) -> None:
+def check_dtypes(xp: Any, dtypes: list[DataType], stubs: list[str]) -> None:
     if len(dtypes) == 0:
         assert len(stubs) > 0, "No dtypes passed but stubs is empty"
         f_stubs = ", ".join(stubs)
@@ -654,8 +652,13 @@ def numeric_dtype_names(base_name: str, sizes: Sequence[int]) -> Iterator[str]:
         yield f"{base_name}{size}"
 
 
+IntSize: "TypeAlias" = Literal[8, 16, 32, 64]
+FltSize: "TypeAlias" = Literal[32, 64]
+CpxSize: "TypeAlias" = Literal[64, 128]
+
+
 def _integer_dtypes(
-    xp: Any, *, sizes: Union[int, Sequence[int]] = (8, 16, 32, 64)
+    xp: Any, *, sizes: Union[IntSize, Sequence[IntSize]] = (8, 16, 32, 64)
 ) -> st.SearchStrategy[DataType]:
     """Return a strategy for signed integer dtype objects.
 
@@ -673,7 +676,7 @@ def _integer_dtypes(
 
 
 def _unsigned_integer_dtypes(
-    xp: Any, *, sizes: Union[int, Sequence[int]] = (8, 16, 32, 64)
+    xp: Any, *, sizes: Union[IntSize, Sequence[IntSize]] = (8, 16, 32, 64)
 ) -> st.SearchStrategy[DataType]:
     """Return a strategy for unsigned integer dtype objects.
 
@@ -693,7 +696,7 @@ def _unsigned_integer_dtypes(
 
 
 def _floating_dtypes(
-    xp: Any, *, sizes: Union[int, Sequence[int]] = (32, 64)
+    xp: Any, *, sizes: Union[FltSize, Sequence[FltSize]] = (32, 64)
 ) -> st.SearchStrategy[DataType]:
     """Return a strategy for real-valued floating-point dtype objects.
 
@@ -711,7 +714,7 @@ def _floating_dtypes(
 
 
 def _complex_dtypes(
-    xp: Any, *, sizes: Union[int, Sequence[int]] = (64, 128)
+    xp: Any, *, sizes: Union[CpxSize, Sequence[CpxSize]] = (64, 128)
 ) -> st.SearchStrategy[DataType]:
     """Return a strategy for complex dtype objects.
 
@@ -984,19 +987,19 @@ def make_strategies_namespace(
 
     @defines_strategy()
     def integer_dtypes(
-        *, sizes: Union[int, Sequence[int]] = (8, 16, 32, 64)
+        *, sizes: Union[IntSize, Sequence[IntSize]] = (8, 16, 32, 64)
     ) -> st.SearchStrategy[DataType]:
         return _integer_dtypes(xp, sizes=sizes)
 
     @defines_strategy()
     def unsigned_integer_dtypes(
-        *, sizes: Union[int, Sequence[int]] = (8, 16, 32, 64)
+        *, sizes: Union[IntSize, Sequence[IntSize]] = (8, 16, 32, 64)
     ) -> st.SearchStrategy[DataType]:
         return _unsigned_integer_dtypes(xp, sizes=sizes)
 
     @defines_strategy()
     def floating_dtypes(
-        *, sizes: Union[int, Sequence[int]] = (32, 64)
+        *, sizes: Union[FltSize, Sequence[FltSize]] = (32, 64)
     ) -> st.SearchStrategy[DataType]:
         return _floating_dtypes(xp, sizes=sizes)
 
@@ -1057,7 +1060,7 @@ def make_strategies_namespace(
 
         @defines_strategy()
         def complex_dtypes(
-            *, sizes: Union[int, Sequence[int]] = (64, 128)
+            *, sizes: Union[CpxSize, Sequence[CpxSize]] = (64, 128)
         ) -> st.SearchStrategy[DataType]:
             return _complex_dtypes(xp, sizes=sizes)
 
@@ -1082,7 +1085,7 @@ except ImportError:
 
         np = Mock()
     else:
-        np = None
+        np = None  # type: ignore[assignment]
 if np is not None:
 
     class FloatInfo(NamedTuple):
@@ -1103,7 +1106,7 @@ if np is not None:
         introduced it in v1.21.1, so we just use the equivalent tiny attribute
         to keep mocking with older versions working.
         """
-        _finfo = np.finfo(dtype)
+        _finfo = np.finfo(dtype)  # type: ignore[call-overload]
         return FloatInfo(
             int(_finfo.bits),
             float(_finfo.eps),

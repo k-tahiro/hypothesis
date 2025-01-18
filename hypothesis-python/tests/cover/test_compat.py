@@ -9,6 +9,7 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import math
+from collections import defaultdict, namedtuple
 from dataclasses import dataclass
 from functools import partial
 from inspect import Parameter, Signature, signature
@@ -16,7 +17,14 @@ from typing import ForwardRef, Optional, Union
 
 import pytest
 
-from hypothesis.internal.compat import ceil, floor, get_type_hints
+from hypothesis.internal.compat import (
+    add_note,
+    ceil,
+    dataclass_asdict,
+    extract_bits,
+    floor,
+    get_type_hints,
+)
 
 floor_ceil_values = [
     -10.7,
@@ -91,7 +99,7 @@ def test_resolve_fwd_refs(obj, expected):
     assert get_type_hints(obj)["x"] == expected
 
 
-def func(a, b: int, *c: str, d: int = None):
+def func(a, b: int, *c: str, d: Optional[int] = None):
     pass
 
 
@@ -106,3 +114,42 @@ def func(a, b: int, *c: str, d: int = None):
 )
 def test_get_hints_through_partial(pf, names):
     assert set(get_type_hints(pf)) == set(names.split())
+
+
+@dataclass
+class FilledWithStuff:
+    a: list
+    b: tuple
+    c: namedtuple
+    d: dict
+    e: defaultdict
+
+
+def test_dataclass_asdict():
+    ANamedTuple = namedtuple("ANamedTuple", ("with_some_field"))
+    obj = FilledWithStuff(a=[1], b=(2), c=ANamedTuple(3), d={4: 5}, e=defaultdict(list))
+    assert dataclass_asdict(obj) == {
+        "a": [1],
+        "b": (2),
+        "c": ANamedTuple(3),
+        "d": {4: 5},
+        "e": {},
+    }
+
+
+@pytest.mark.parametrize("width", [None, 8])
+@pytest.mark.parametrize("x", [0, 2, 123])
+def test_extract_bits_roundtrip(width, x):
+    bits = extract_bits(x, width=width)
+    if width is not None:
+        assert len(bits) == width
+    assert x == sum(v << p for p, v in enumerate(reversed(bits)))
+
+
+@dataclass(frozen=True)
+class ImmutableError:
+    msg: str
+
+
+def test_add_note_fails_gracefully_on_frozen_instance():
+    add_note(ImmutableError("msg"), "some note")
