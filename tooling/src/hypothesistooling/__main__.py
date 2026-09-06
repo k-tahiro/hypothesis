@@ -60,7 +60,7 @@ from hypothesistooling.release import (
     update_changelog_and_version,
     upload_distribution_to_pypi,
 )
-from hypothesistooling.scripts import pip_tool
+from hypothesistooling.scripts import pip_tool, print_command, tool_path
 
 TASKS = {}
 BUILD_FILES = tuple(
@@ -113,10 +113,24 @@ def codespell(*files):
     )
 
 
+def zizmor(*args):
+    args = [*args, ".github/"]
+    print_command("zizmor", args)
+    returncode = subprocess.call([tool_path("zizmor"), *args])
+    # Exit code 1 means that zizmor itself errored out, usually because one of
+    # its online audits could not reach the GitHub API; findings are reported
+    # with exit codes 11 and up.  We would rather skip the audits which need
+    # the API than fail when it is unavailable.
+    if returncode == 1 and "--no-online-audits" not in args:
+        pip_tool("zizmor", "--no-online-audits", *args)
+    elif returncode:
+        sys.exit(returncode)
+
+
 @task()
 def lint():
     pip_tool("ruff", "check", ".")
-    pip_tool("zizmor", ".github/")
+    zizmor()
     codespell(*(p for p in all_files() if not p.name.endswith("by-domain.txt")))
 
     failed = False
@@ -261,7 +275,7 @@ def format(*, format_all=False):
         # Autofix what we can in our workflows; `lint` reports whatever is left.
         # Online audits are skipped so that formatting never needs the network -
         # we pin actions ourselves, in the update-gha-pins task.
-        pip_tool("zizmor", "--fix", "--no-online-audits", "--no-exit-codes", ".github/")
+        zizmor("--fix", "--no-online-audits", "--no-exit-codes")
 
     if not (py_paths_to_format or rust_paths_to_format or doc_paths_to_format):
         return
