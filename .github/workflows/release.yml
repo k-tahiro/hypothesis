@@ -24,7 +24,7 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: ./.github/actions/install-base
+    - uses: $/.github/actions/install-base
       with:
         python-version: "3.14"
         task: prepare-release
@@ -274,7 +274,7 @@ jobs:
         merge-multiple: true
     - name: Show collected artifacts
       run: ls -la hypothesis/dist/
-    - uses: ./.github/actions/install-base
+    - uses: $/.github/actions/install-base
       with:
         python-version: "3.14"
         task: publish
