@@ -246,7 +246,7 @@ def format(*, format_all=False):
     changed = modified_files()
 
     format_all = format_all or os.environ.get("FORMAT_ALL", "").lower() == "true"
-    if "requirements/tools.txt" in changed:
+    if Path("requirements/tools.txt") in changed:
         # We've changed the tools, which includes a lot of our formatting
         # logic, so we need to rerun formatters.
         format_all = True
