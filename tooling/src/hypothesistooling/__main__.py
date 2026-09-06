@@ -486,7 +486,7 @@ def update_python_versions():
 DJANGO_VERSIONS = {
     "5.2": "5.2.17",
     "6.0": "6.0.8",
-    "6.1": "6.1",
+    "6.1": "6.1.1",
 }
 
 
@@ -820,8 +820,8 @@ PYTHONS = {
     "3.13": "3.13.15",
     "3.14": "3.14.7",
     "3.14t": "3.14.7+freethreaded",
-    "3.15": "3.15.0rc1",
-    "3.15t": "3.15.0rc1+freethreaded",
+    "3.15": "3.15.0rc2",
+    "3.15t": "3.15.0rc2+freethreaded",
     "pypy3.11": "pypy3.11-3.11.15",
 }
 ci_version_python = (

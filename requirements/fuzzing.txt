@@ -6,7 +6,7 @@
 #
 annotated-types==0.8.0
     # via -r requirements/coverage.in
-anyio==4.14.2
+anyio==4.15.1
     # via starlette
 attrs==26.1.0
     # via
@@ -46,7 +46,7 @@ hyperframe==6.1.0
     # via h2
 hypofuzz==25.11.1
     # via -r requirements/fuzzing.in
-hypothesis[cli,watchdog]==6.166.0
+hypothesis[cli,watchdog]==6.167.1
     # via hypofuzz
 idna==3.19
     # via
@@ -82,7 +82,7 @@ pathspec==1.1.1
     # via black
 pexpect==4.9.0
     # via -r requirements/test.in
-platformdirs==4.11.5
+platformdirs==4.11.7
     # via black
 pluggy==1.6.0
     # via
@@ -142,7 +142,9 @@ syrupy==6.0.0
 trio==0.34.0
     # via hypofuzz
 typing-extensions==4.16.0
-    # via -r requirements/coverage.in
+    # via
+    #   -r requirements/coverage.in
+    #   anyio
 watchdog==6.0.0
     # via
     #   -r requirements/coverage.in
