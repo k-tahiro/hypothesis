@@ -243,15 +243,6 @@ class _BrokenTimezone(dt.tzinfo):
         return "Broken"
 
 
-def test_tricky_draw_with_misbehaving_tzinfo_falls_back():
-    # Probing a tzinfo whose methods raise finds no interesting instants,
-    # so a tricky draw falls back to an ordinary one instead of erroring.
-    strategy = unwrap_strategies(datetimes(timezones=st.just(_BrokenTimezone())))
-    data = ConjectureData.for_choices((True, 2001, 2, 3, 4, 5, 6, 7, 0))
-    value = strategy.do_draw(data)
-    assert value.replace(tzinfo=None) == dt.datetime(2001, 2, 3, 4, 5, 6, 7)
-
-
 class _UnhashableTimezone(dt.tzinfo):
     __hash__ = None
 
@@ -265,10 +256,12 @@ class _UnhashableTimezone(dt.tzinfo):
         return "Unhashable"
 
 
-def test_tricky_draw_with_unhashable_tzinfo_falls_back():
-    # The interesting-instants cache requires a hashable tzinfo; without one
-    # a tricky draw falls back to an ordinary draw.
-    strategy = unwrap_strategies(datetimes(timezones=st.just(_UnhashableTimezone())))
+@pytest.mark.parametrize("tz_class", [_BrokenTimezone, _UnhashableTimezone])
+def test_tricky_draw_with_unusable_tzinfo_falls_back(tz_class):
+    # A tzinfo whose methods raise when probed, or which the
+    # interesting-instants cache cannot hash, yields no interesting instants;
+    # a tricky draw falls back to an ordinary one instead of erroring.
+    strategy = unwrap_strategies(datetimes(timezones=st.just(tz_class())))
     data = ConjectureData.for_choices((True, 2001, 2, 3, 4, 5, 6, 7, 0))
     value = strategy.do_draw(data)
     assert value.replace(tzinfo=None) == dt.datetime(2001, 2, 3, 4, 5, 6, 7)
