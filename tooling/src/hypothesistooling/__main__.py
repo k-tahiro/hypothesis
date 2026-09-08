@@ -108,7 +108,7 @@ def codespell(*files):
         # Add it back in with --dictionary=-.
         "--dictionary=-",
         "--dictionary=./tooling/codespell-dict.txt",
-        "--skip=__pycache__,.mypy_cache,.venv,.git,tlds-alpha-by-domain.txt",
+        "--skip=__pycache__,.mypy_cache,.venv,.git,tlds-alpha-by-domain.txt,leap-seconds.txt",
         *files,
     )
 
@@ -117,7 +117,8 @@ def codespell(*files):
 def lint():
     pip_tool("ruff", "check", ".")
     pip_tool("zizmor", ".github/")
-    codespell(*(p for p in all_files() if not p.name.endswith("by-domain.txt")))
+    vendored_data = ("tlds-alpha-by-domain.txt", "leap-seconds.txt")
+    codespell(*(p for p in all_files() if p.name not in vendored_data))
 
     failed = False
 
@@ -685,6 +686,19 @@ def update_vendored_files():
     new = requests.get(url).content
     # If only the timestamp in the header comment has changed, skip the update.
     if fname.read_bytes().splitlines()[1:] != new.splitlines()[1:]:
+        fname.write_bytes(new)
+
+    url = "https://data.iana.org/time-zones/data/leap-seconds.list"
+    fname = vendor / "leap-seconds.txt"
+    response = requests.get(url)
+    response.raise_for_status()
+    new = response.content
+
+    def data_lines(raw):
+        # skip comment lines, which include a last-update timestamp and expiry date
+        return [line for line in raw.splitlines() if not line.startswith(b"#")]
+
+    if data_lines(fname.read_bytes()) != data_lines(new):
         fname.write_bytes(new)
 
     # Always require the most recent version of tzdata - we don't need to worry about
