@@ -272,7 +272,7 @@ _FALLBACK_SCAN = dt.timedelta(days=4 * 366)  # covers any recurring annual rule
 # The probability that a draw targets a tricky value, and the half-widths of
 # the windows we draw them from: tight enough to hit the boundary
 # microseconds, wide enough to reach e.g. the far side of a DST gap.
-_TRICKY_P = 0.25
+_TRICKY_P = 0.05
 _TRICKY_WIDTHS = (
     dt.timedelta(seconds=1, microseconds=1),
     dt.timedelta(hours=1, microseconds=1),
