@@ -686,7 +686,9 @@ def update_vendored_files():
 
     url = "https://data.iana.org/time-zones/data/leap-seconds.list"
     fname = vendor / "leap-seconds.txt"
-    new = requests.get(url).content
+    response = requests.get(url)
+    response.raise_for_status()
+    new = response.content
 
     def data_lines(raw):
         return [line for line in raw.splitlines() if not line.startswith(b"#")]
