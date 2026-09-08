@@ -246,7 +246,7 @@ def format(*, format_all=False):
     changed = modified_files()
 
     format_all = format_all or os.environ.get("FORMAT_ALL", "").lower() == "true"
-    if "requirements/tools.txt" in changed:
+    if Path("requirements/tools.txt") in changed:
         # We've changed the tools, which includes a lot of our formatting
         # logic, so we need to rerun formatters.
         format_all = True
@@ -256,6 +256,10 @@ def format(*, format_all=False):
     doc_paths_to_format = [p for p in sorted(paths) if p.suffix in {".rst", ".md"}]
     py_paths_to_format = [p for p in sorted(paths) if p.suffix == ".py"]
     rust_paths_to_format = [p for p in sorted(paths) if p.suffix == ".rs"]
+
+    if any(p.parts[0] == ".github" and p.suffix == ".yml" for p in paths):
+        # Autofix what we can in our workflows; `lint` reports whatever is left.
+        pip_tool("zizmor", "--fix", "--no-exit-codes", ".github/")
 
     if not (py_paths_to_format or rust_paths_to_format or doc_paths_to_format):
         return
@@ -486,7 +490,7 @@ def update_python_versions():
 DJANGO_VERSIONS = {
     "5.2": "5.2.17",
     "6.0": "6.0.8",
-    "6.1": "6.1",
+    "6.1": "6.1.1",
 }
 
 
@@ -704,6 +708,10 @@ def has_diff(file_or_directory):
 def upgrade_requirements():
     update_vendored_files()
     compile_requirements(upgrade=True)
+    update_python_versions()
+    update_pyodide_versions()
+    update_django_versions()
+    update_gha_pins()
     # Reformat every file, not just changed ones: upgrading the formatters in
     # tools.txt can change how they format files we didn't otherwise touch, and
     # we want those changes in this PR rather than leaking into a later one.
@@ -716,10 +724,6 @@ def upgrade_requirements():
         msg = get_autoupdate_message(domainlist_changed=has_diff(DOMAINS_LIST))
         with open(RELEASE_FILE, mode="w", encoding="utf-8") as f:
             f.write(f"RELEASE_TYPE: patch\n\n{msg}")
-    update_python_versions()
-    update_pyodide_versions()
-    update_django_versions()
-    update_gha_pins()
     subprocess.call(["git", "add", "."], cwd=ROOT)
 
 
@@ -820,8 +824,8 @@ PYTHONS = {
     "3.13": "3.13.15",
     "3.14": "3.14.7",
     "3.14t": "3.14.7+freethreaded",
-    "3.15": "3.15.0rc1",
-    "3.15t": "3.15.0rc1+freethreaded",
+    "3.15": "3.15.0rc2",
+    "3.15t": "3.15.0rc2+freethreaded",
     "pypy3.11": "pypy3.11-3.11.15",
 }
 ci_version_python = (
