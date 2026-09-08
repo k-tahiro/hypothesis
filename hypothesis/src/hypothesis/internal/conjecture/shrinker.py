@@ -653,6 +653,7 @@ class Shrinker:
                 new_choices.extend(choices[prev_end:start])
                 new_choices.extend(self.random.choice(ls))
                 prev_end = end
+            new_choices.extend(choices[prev_end:])
 
             result = self.engine.cached_test_function(new_choices)
 
@@ -1492,7 +1493,7 @@ class Shrinker:
 
             # if we've increased node2 to the point that we're past max precision,
             # give up - things have become too unstable.
-            if node1.type == "float" and abs(v2) >= MAX_PRECISE_INTEGER:
+            if node2.type == "float" and abs(v2) >= MAX_PRECISE_INTEGER:
                 return False
 
             return self.consider_new_nodes(

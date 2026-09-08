@@ -39,6 +39,11 @@ def _calling_function_location(what: str, frame: Any) -> str:
     return f"{what}() in {where.f_code.co_name} (line {where.f_lineno})"
 
 
+def _calling_frame_location(frame: Any) -> str:
+    where = frame.f_back
+    return f"{where.f_code.co_filename}:{where.f_lineno}"
+
+
 def reject() -> NoReturn:
     if _current_build_context.value is None:
         note_deprecation(
@@ -46,11 +51,12 @@ def reject() -> NoReturn:
             since="2023-09-25",
             has_codemod=False,
         )
-    where = _calling_function_location("reject", inspect.currentframe())
+    frame = inspect.currentframe()
+    where = _calling_function_location("reject", frame)
     if currently_in_test_context():
         counts = current_build_context().data._observability_predicates[where]
         counts.update_count(condition=False)
-    raise UnsatisfiedAssumption(where)
+    raise UnsatisfiedAssumption(where, location=_calling_frame_location(frame))
 
 
 @overload
@@ -73,12 +79,16 @@ def assume(condition: object) -> Literal[True]:
             has_codemod=False,
         )
     if observability_enabled() or not condition:
-        where = _calling_function_location("assume", inspect.currentframe())
+        frame = inspect.currentframe()
+        where = _calling_function_location("assume", frame)
         if observability_enabled() and currently_in_test_context():
             counts = current_build_context().data._observability_predicates[where]
             counts.update_count(condition=bool(condition))
         if not condition:
-            raise UnsatisfiedAssumption(f"failed to satisfy {where}")
+            raise UnsatisfiedAssumption(
+                f"failed to satisfy {where}",
+                location=_calling_frame_location(frame),
+            )
     return True
 
 
@@ -161,29 +171,6 @@ class BuildContext:
             defaultdict(list)
         )
 
-        # Track nested strategy calls for explain-phase label paths
-        self._label_path: list[str] = []
-
-    @contextmanager
-    def track_arg_label(self, label: str) -> Generator[ArgLabelsT, None, None]:
-        span_index = self.data.next_span_index
-        self._label_path.append(label)
-        arg_labels: ArgLabelsT = {}
-        try:
-            yield arg_labels
-        finally:
-            self._label_path.pop()
-
-        # The draw inside this block opened a span, whose index we knew in
-        # advance even though Span objects are only materialized after the
-        # test case is completed. Stash that index on our data object for
-        # the shrinker's explain phase to vary, and mutate the arg_labels
-        # dict so that the pretty-printer knows where to place the
-        # which-parts-matter comments later. (If the draw raised instead,
-        # we skip recording, along with the rest of the test case.)
-        arg_labels[label] = span_index
-        self.data.arg_spans.add(span_index)
-
     def record_call(
         self,
         obj: object,
@@ -213,7 +200,7 @@ class BuildContext:
 
         for k, s in kwarg_strategies.items():
             with (
-                self.track_arg_label(k) as arg_label,
+                self.data.track_arg_label(k) as arg_label,
                 deprecate_random_in_strategy("from {}={!r}", k, s),
             ):
                 kwargs[k] = self.data.draw(s, observe_as=f"generate:{k}")

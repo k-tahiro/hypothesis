@@ -792,7 +792,12 @@ class ConjectureRunner:
             ):
                 self.exit_with(ExitReason.max_iterations)
 
-        if self.__tree_is_exhausted():
+        # With interesting test cases that made at least one choice,
+        # ``should_generate_more`` instead ends the generation phase on an
+        # exhausted tree, so that we still shrink (and explain) them.
+        if self.__tree_is_exhausted() and not any(
+            tc.choices for tc in self.interesting_test_cases.values()
+        ):
             self.exit_with(ExitReason.finished)
 
         self.record_for_health_check(data)
@@ -984,7 +989,7 @@ class ConjectureRunner:
             status = f"{status} ({data.interesting_origin!r})"
         elif data.status == Status.INVALID and isinstance(data, ConjectureData):
             assert isinstance(data, ConjectureData)  # mypy is silly
-            status = f"{status} ({data.events.get('invalid because', '?')})"
+            status = f"{status} ({data.events.get('gave up because', '?')})"
 
         self.debug(f"{len(data.choices)} choices -> {status}\n\t{data.choices}")
 
@@ -1150,6 +1155,7 @@ class ConjectureRunner:
         if (
             self.valid_test_cases >= self.settings.max_examples
             or (self.invalid_test_cases + self.overrun_test_cases) > invalid_threshold
+            or self.__tree_is_exhausted()
         ):
             return False
 
@@ -1355,9 +1361,9 @@ class ConjectureRunner:
             if (
                 data.status is Status.OVERRUN
                 and max_length is not None
-                and "invalid because" not in data.events
+                and "gave up because" not in data.events
             ):
-                data.events["invalid because"] = (
+                data.events["gave up because"] = (
                     "reduced max size for early test cases (avoids flaky health checks)"
                 )
 

@@ -18,6 +18,61 @@ Hypothesis 6.x
 
     .. include:: ../RELEASE.rst
 
+.. _v6.167.1:
+
+--------------------
+6.167.1 - 2026-08-30
+--------------------
+
+This patch improves shrinking and generation for collection strategies which
+reject some drawn elements, such as :func:`~hypothesis.strategies.lists` with
+``unique=True``. Rejected elements are now marked as discarded, so the
+shrinker can delete them wholesale and generation avoids revisiting
+choices that would be rejected again.
+
+.. _v6.167.0:
+
+--------------------
+6.167.0 - 2026-08-30
+--------------------
+
+Test case observations from |observability| now give more detail about why a
+test case failed or was abandoned (:issue:`3845`). ``metadata`` includes a new
+``status_reason_location`` key: a ``filename:lineno`` location for the
+``status_reason``, if known - for example the location of a failing |assume|
+call, the |.filter| call whose predicate rejected the last drawn value, or the
+exception for failing tests.
+
+Test cases which exceeded the maximum allowed size now also report a nonempty
+``status_reason``.
+
+.. _v6.166.0:
+
+--------------------
+6.166.0 - 2026-08-29
+--------------------
+
+The |Phase.explain| phase now also varies interactive draws from |st.data|,
+annotating each freely-variable ``Draw n: ...`` line with an
+``# or any other generated value`` comment, just like |@given| arguments
+(:issue:`4403`).
+
+This release also fixes two explain-phase bugs: failing test cases found just
+as the set of possible inputs was fully enumerated were reported without
+running the |Phase.shrink| and |Phase.explain| phases, and the
+explain phase could fail to report that the commented parts can be varied
+together if the failing example ended with an uncommented part.
+
+.. _v6.165.11:
+
+---------------------
+6.165.11 - 2026-08-29
+---------------------
+
+This patch fixes the ``redistribute_numeric_pairs`` shrink pass, which
+incorrectly checked ``node1.type`` instead of ``node2.type`` when guarding
+against float precision loss above ``MAX_PRECISE_INTEGER``.
+
 .. _v6.165.10:
 
 ---------------------

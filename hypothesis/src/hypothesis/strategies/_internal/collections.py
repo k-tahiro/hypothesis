@@ -77,7 +77,7 @@ class TupleStrategy(SearchStrategy[tuple[Ex, ...]]):
         arg_labels: ArgLabelsT = {}
         result = []
         for i, strategy in enumerate(self.element_strategies):
-            with context.track_arg_label(f"arg[{i}]") as arg_label:
+            with data.track_arg_label(f"arg[{i}]") as arg_label:
                 result.append(data.draw(strategy))
             arg_labels |= arg_label
 
@@ -435,7 +435,7 @@ class UniqueSampledListStrategy(UniqueListStrategy):
 
         while remaining and should_draw.more():
             j = data.draw_integer(0, len(remaining) - 1)
-            value = self.element_strategy._transform(remaining.pop(j))
+            value = self.element_strategy._transform(remaining.pop(j), data=data)
             if value is not filter_not_satisfied and all(
                 key(value) not in seen
                 for key, seen in zip(self.keys, seen_sets, strict=True)
@@ -470,7 +470,9 @@ class UniqueSampledListStrategy(UniqueListStrategy):
         for i, (element, target) in enumerate(zip(value, targets, strict=True)):
             choices.extend(elements.more())
             for j, candidate in enumerate(remaining):
-                if equal_values(self.element_strategy._transform(candidate), target):
+                if equal_values(
+                    self.element_strategy._transform(candidate, data=None), target
+                ):
                     choices.append(j)
                     remaining.pop(j)
                     break
@@ -520,7 +522,7 @@ class FixedDictStrategy(SearchStrategy[Mapping[Any, Any]]):
         pairs: list[tuple[Any, Any]] = []
 
         for key, strategy in self.mapping.items():
-            with context.track_arg_label(str(key)) as arg_label:
+            with data.track_arg_label(str(key)) as arg_label:
                 pairs.append((key, data.draw(strategy)))
             arg_labels |= arg_label
 
@@ -536,7 +538,7 @@ class FixedDictStrategy(SearchStrategy[Mapping[Any, Any]]):
                 j = data.draw_integer(0, len(remaining) - 1)
                 remaining[-1], remaining[j] = remaining[j], remaining[-1]
                 key = remaining.pop()
-                with context.track_arg_label(str(key)) as arg_label:
+                with data.track_arg_label(str(key)) as arg_label:
                     pairs.append((key, data.draw(self.optional[key])))
                 arg_labels |= arg_label
 
