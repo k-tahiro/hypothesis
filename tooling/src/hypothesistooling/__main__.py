@@ -108,7 +108,7 @@ def codespell(*files):
         # Add it back in with --dictionary=-.
         "--dictionary=-",
         "--dictionary=./tooling/codespell-dict.txt",
-        "--skip=__pycache__,.mypy_cache,.venv,.git,tlds-alpha-by-domain.txt,leap-seconds.list",
+        "--skip=__pycache__,.mypy_cache,.venv,.git,tlds-alpha-by-domain.txt,leap-seconds.txt",
         *files,
     )
 
@@ -117,7 +117,7 @@ def codespell(*files):
 def lint():
     pip_tool("ruff", "check", ".")
     pip_tool("zizmor", ".github/")
-    vendored_data = ("tlds-alpha-by-domain.txt", "leap-seconds.list")
+    vendored_data = ("tlds-alpha-by-domain.txt", "leap-seconds.txt")
     codespell(*(p for p in all_files() if p.name not in vendored_data))
 
     failed = False
@@ -685,7 +685,7 @@ def update_vendored_files():
         fname.write_bytes(new)
 
     url = "https://data.iana.org/time-zones/data/leap-seconds.list"
-    fname = vendor / url.split("/")[-1]
+    fname = vendor / "leap-seconds.txt"
     new = requests.get(url).content
 
     def data_lines(raw):

@@ -18,7 +18,7 @@ def test_leap_seconds_literal_matches_vendored_list():
     # The vendored IERS file is a repo-only reference, refreshed by
     # `update_vendored_files`; if it gains an entry, add it to the
     # _LEAP_SECONDS literal too.
-    source = PYTHON_SRC / "hypothesis" / "vendor" / "leap-seconds.list"
+    source = PYTHON_SRC / "hypothesis" / "vendor" / "leap-seconds.txt"
     epoch = dt.datetime(1900, 1, 1)  # the NTP epoch used for the timestamps
     parsed = tuple(
         epoch + dt.timedelta(seconds=int(line.split()[0]))
