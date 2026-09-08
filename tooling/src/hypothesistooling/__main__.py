@@ -60,7 +60,7 @@ from hypothesistooling.release import (
     update_changelog_and_version,
     upload_distribution_to_pypi,
 )
-from hypothesistooling.scripts import pip_tool, print_command, tool_path
+from hypothesistooling.scripts import pip_tool
 
 TASKS = {}
 BUILD_FILES = tuple(
@@ -113,24 +113,10 @@ def codespell(*files):
     )
 
 
-def zizmor(*args):
-    args = [*args, ".github/"]
-    print_command("zizmor", args)
-    returncode = subprocess.call([tool_path("zizmor"), *args])
-    # Exit code 1 means that zizmor itself errored out, usually because one of
-    # its online audits could not reach the GitHub API; findings are reported
-    # with exit codes 11 and up.  We would rather skip the audits which need
-    # the API than fail when it is unavailable.
-    if returncode == 1 and "--no-online-audits" not in args:
-        pip_tool("zizmor", "--no-online-audits", *args)
-    elif returncode:
-        sys.exit(returncode)
-
-
 @task()
 def lint():
     pip_tool("ruff", "check", ".")
-    zizmor()
+    pip_tool("zizmor", ".github/")
     codespell(*(p for p in all_files() if not p.name.endswith("by-domain.txt")))
 
     failed = False
@@ -273,9 +259,7 @@ def format(*, format_all=False):
 
     if any(p.parts[0] == ".github" and p.suffix == ".yml" for p in paths):
         # Autofix what we can in our workflows; `lint` reports whatever is left.
-        # Online audits are skipped so that formatting never needs the network -
-        # we pin actions ourselves, in the update-gha-pins task.
-        zizmor("--fix", "--no-online-audits", "--no-exit-codes")
+        pip_tool("zizmor", "--fix", "--no-exit-codes", ".github/")
 
     if not (py_paths_to_format or rust_paths_to_format or doc_paths_to_format):
         return
@@ -731,8 +715,6 @@ def upgrade_requirements():
     # Reformat every file, not just changed ones: upgrading the formatters in
     # tools.txt can change how they format files we didn't otherwise touch, and
     # we want those changes in this PR rather than leaking into a later one.
-    # Formatting comes after the updates above so that e.g. zizmor's autofixes
-    # apply to our newly-updated workflows.
     subprocess.call(
         ["./build.sh", "format"],
         cwd=ROOT,
