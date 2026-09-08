@@ -402,14 +402,22 @@ def _interesting_instants(tz, lo, hi):
     try:
         if tz is None:
             transitions = ()
-        elif lo > _SCAN_HI or hi < _SCAN_LO:
-            # The window is wholly outside the usual scan range: probe a few
+        elif lo > _SCAN_HI:
+            # The window is wholly above the usual scan range: probe a few
             # years directly, enough to cover any recurring annual rule.
             try:
                 cap = lo + _FALLBACK_SCAN
             except OverflowError:  # within a few years of datetime.max
                 cap = hi
             transitions = _probe_transitions(tz, lo, min(hi, cap))
+        elif hi < _SCAN_LO:
+            # Wholly before the scan range: probe backwards from the window's
+            # end.
+            try:
+                floor = hi - _FALLBACK_SCAN
+            except OverflowError:  # within a few years of datetime.min
+                floor = lo
+            transitions = _probe_transitions(tz, max(lo, floor), hi)
         else:
             transitions = _transitions(tz)
     except Exception:

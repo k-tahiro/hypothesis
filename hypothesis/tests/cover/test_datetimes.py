@@ -289,6 +289,31 @@ def test_fixed_offset_timezones_has_no_interesting_instants():
     assert nearest == 0
 
 
+class _EarlyTransitionTimezone(dt.tzinfo):
+    # A timezone with an offset change in 1699
+    def utcoffset(self, value):
+        naive = value.replace(tzinfo=None)
+        return dt.timedelta(hours=2 * (naive >= dt.datetime(1699, 6, 1)))
+
+    def dst(self, value):
+        return dt.timedelta(0)
+
+    def tzname(self, value):
+        return "Early"
+
+
+def test_early_transition_timezone_interesting_instants():
+    lo, hi = dt.datetime.min, dt.datetime(1700, 1, 1)
+    instants, nearest = _interesting_instants(_EarlyTransitionTimezone(), lo, hi)
+    assert instants == (dt.datetime(1699, 6, 1),)
+    assert nearest == 0
+
+
+def test_interesting_instants_near_datetime_min():
+    lo, hi = dt.datetime.min, dt.datetime(3, 1, 1)
+    assert _interesting_instants(_EarlyTransitionTimezone(), lo, hi) == ((), 0)
+
+
 UTC = dt.timezone.utc
 fixed_offsets = st.builds(
     dt.timezone, st.timedeltas(dt.timedelta(hours=-23), dt.timedelta(hours=23))
