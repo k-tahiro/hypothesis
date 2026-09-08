@@ -17,7 +17,11 @@ from hypothesis import HealthCheck, example, given, settings, strategies as st
 from hypothesis.errors import InvalidArgument, StopTest, Unsatisfiable
 from hypothesis.internal.conjecture.data import ConjectureData
 from hypothesis.strategies import dates, datetimes, timedeltas, times
-from hypothesis.strategies._internal.datetime import _instant, _num_days_in_month
+from hypothesis.strategies._internal.datetime import (
+    _instant,
+    _interesting_instants,
+    _num_days_in_month,
+)
 from hypothesis.strategies._internal.lazy import unwrap_strategies
 
 from tests.common.debug import (
@@ -274,6 +278,15 @@ def test_tricky_path_is_skipped_when_provably_fruitless():
     assert not unwrap_strategies(quiet).tricky_possible
     assert unwrap_strategies(datetimes()).tricky_possible
     check_can_generate_examples(quiet)
+
+
+def test_fixed_offset_timezones_has_no_interesting_instants():
+    # A fixed-offset timezone has no transitions
+    instants, nearest = _interesting_instants(
+        dt.timezone.utc, dt.datetime(2016, 1, 1), dt.datetime(2018, 1, 1)
+    )
+    assert instants == (dt.datetime(2017, 1, 1),)
+    assert nearest == 0
 
 
 UTC = dt.timezone.utc

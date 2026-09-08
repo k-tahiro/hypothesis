@@ -353,6 +353,11 @@ def _probe_transitions(tz, lo, hi):
     seven days apart, above our six-day step, so in practice we
     find every transition of every zone.
     """
+    if isinstance(tz, dt.timezone):
+        # dt.timezone is guaranteed to be a fixed-offset timezone. (This is in
+        # contrast to zoneinfo.ZoneInfo, which can be varying-offset). Fixed-offset
+        # timezones cannot have any transitions, so skip probing.
+        return ()
     transitions = []
     at, state = lo, _tz_state(lo, tz)
     while at < hi:
