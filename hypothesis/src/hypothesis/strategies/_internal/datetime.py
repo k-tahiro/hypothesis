@@ -529,8 +529,8 @@ class DatetimeStrategy(SearchStrategy):
             )
         lo, hi = (_as_naive_datetime(b) for b in window)
         center = min(max(instant, lo), hi)
-        low = center - width if center - lo >= width else lo
-        high = center + width if hi - center >= width else hi
+        low = center - min(width, center - lo)
+        high = center + min(width, hi - center)
         result = draw_capped_multipart(data, low, high)
         value = replace_tzinfo(dt.datetime(**result), timezone=tz)
         if self.aware and not self.in_bounds(value):
