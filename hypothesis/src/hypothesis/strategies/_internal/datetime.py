@@ -484,15 +484,18 @@ class DatetimeStrategy(SearchStrategy):
             )
         if self.tricky_possible and data.draw_boolean(_TRICKY_P):
             result = self.draw_tricky_datetime(data, tz)
-        elif self.aware:
-            result = self.draw_aware_datetime(data, tz)
         else:
-            result = self.draw_naive_datetime(data, tz)
+            result = self._draw_ordinary_datetime(data, tz)
 
         # If we happened to end up with a disallowed imaginary time, reject it.
         if (not self.allow_imaginary) and datetime_does_not_exist(result):
             data.mark_invalid(f"{result} does not exist (usually a DST transition)")
         return result
+
+    def _draw_ordinary_datetime(self, data, tz):
+        if self.aware:
+            return self.draw_aware_datetime(data, tz)
+        return self.draw_naive_datetime(data, tz)
 
     def draw_tricky_datetime(self, data, tz):
         """Draw a tricky datetime using the interesting instants."""
@@ -510,9 +513,8 @@ class DatetimeStrategy(SearchStrategy):
         else:
             window = (self.min_value, self.max_value)
         if not instants:
-            if self.aware:
-                return self.draw_aware_datetime(data, tz)
-            return self.draw_naive_datetime(data, tz)
+            # if it turns out nothing is tricky, fall back to a normal draw
+            return self._draw_ordinary_datetime(data, tz)
         instant = instants[
             data.draw_integer(0, len(instants) - 1, shrink_towards=nearest)
         ]
