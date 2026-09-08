@@ -24,7 +24,7 @@ from hypothesis import (
     strategies as st,
 )
 from hypothesis.errors import InvalidArgument
-from hypothesis.internal.cache import GenericCache, LRUCache, LRUReusedCache
+from hypothesis.internal.cache import Entry, GenericCache, LRUCache, LRUReusedCache
 
 from tests.common.utils import Why, skipif_emscripten, xfail_on_crosshair
 
@@ -351,8 +351,6 @@ def test_cache_repairs_itself_after_an_interrupted_mutation(op):
     # A mutation interrupted partway through rebalancing - most plausibly by
     # RecursionError below a deeply recursive strategy - used to leave the
     # heap invariants broken forever, failing an assertion on a later insert.
-    from hypothesis.internal.cache import Entry
-
     cache = (StaticScoreCache if op in ("pin", "unpin") else LRUReusedCache)(8)
     for i in range(8):
         cache[i] = i

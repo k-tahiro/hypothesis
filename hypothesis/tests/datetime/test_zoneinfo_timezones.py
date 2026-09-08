@@ -18,6 +18,7 @@ import pytest
 
 from hypothesis import given, settings, strategies as st
 from hypothesis.errors import InvalidArgument
+from hypothesis.internal.conjecture.data import ConjectureData
 from hypothesis.strategies._internal.datetime import (
     DatetimeStrategy,
     _ambiguous,
@@ -291,8 +292,6 @@ def test_probing_a_misaligned_window_still_finds_transitions():
 def test_tricky_draw_falls_back_for_utc_frame_bounds():
     # Bounds inside the same DST fold have no wall-clock drawing window, so a
     # tricky draw falls back to the ordinary draw-in-UTC-and-convert path.
-    from hypothesis.internal.conjecture.data import ConjectureData
-
     tz = zoneinfo.ZoneInfo("America/New_York")
     lo = dt.datetime(2020, 11, 1, 1, 59, tzinfo=tz, fold=0)
     hi = dt.datetime(2020, 11, 1, 1, 1, tzinfo=tz, fold=1)
