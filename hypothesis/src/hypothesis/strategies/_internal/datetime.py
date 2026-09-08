@@ -252,8 +252,8 @@ def _shift_datetime(value, steps):
 
 # "Tricky" datetimes (https://github.com/HypothesisWorks/hypothesis/issues/69):
 # with some probability we generate wall times at small offsets from an
-# "interesting instant" - a moment at which the drawn timezone's
-# (utcoffset, dst, tzname) triple changes, or a UTC leap second.  Working in
+# "interesting instant" - a moment at which any of a drawn timezone's
+# utcoffset, dst, tzname changes, or a UTC leap second.  Working in
 # the wall-clock frame means we hit imaginary times inside spring-forward
 # gaps, ambiguous times (under both folds) inside fall-back folds, and the
 # exact boundaries of each.
@@ -279,10 +279,9 @@ _TRICKY_WIDTHS = (
 )
 
 
-# Naive datetimes for the UTC instant just after each change to TAI-UTC.
-# Python datetimes cannot represent a leap second itself, but adjacent times
-# are prime test cases for code which parses, formats, or smears them.
-# Checked against the vendored IERS leap-seconds.list by a whole-repo test.
+# The UTC instant just after each change to TAI-UTC. datetime can't represent leap seconds,
+# but adjacent times are good test cases for code which parses, formats, or smears them.
+# Keep in sync with leap-seconds.txt.
 _LEAP_SECONDS = (
     dt.datetime(1972, 1, 1),
     dt.datetime(1972, 7, 1),
@@ -345,17 +344,16 @@ def _tz_state(instant, tz):
 
 def _probe_transitions(tz, lo, hi):
     """Naive UTC instants in (lo, hi] at which ``tz`` first reports a changed
-    (utcoffset, dst, tzname), found by scanning at _PROBE_STEP resolution and
-    bisecting each change down to the second - the granularity of tzdata,
-    though a tzinfo transitioning mid-second would be found within one.
+    (utcoffset, dst, tzname), called "transitions". Daylights savings time is a transition,
+    for example.
 
-    Because we resume scanning from each boundary we find, several
+    Found by scanning at _PROBE_STEP resolution and bisecting each change down to the
+    second. Because we resume scanning from each boundary we find, several
     transitions within a single step are all found; the only way to hide one
     is a pair of transitions less than _PROBE_STEP apart which revert to the
     exact prior state.  The closest real pair of transitions is just under
-    seven days apart, comfortably above our six-day step, so in practice we
-    find every transition of every zone (verified against the compiled
-    transition lists in tzdata, via pytz, over the whole scan range).
+    seven days apart, above our six-day step, so in practice we
+    find every transition of every zone.
     """
     transitions = []
     at, state = lo, _tz_state(lo, tz)
@@ -386,8 +384,6 @@ def _probe_transitions(tz, lo, hi):
 
 @cache
 def _transitions(tz):
-    """All transitions of ``tz`` within [_SCAN_LO, _SCAN_HI], probed once per
-    zone - a few tens of milliseconds each, for the zones actually drawn."""
     return _probe_transitions(tz, _SCAN_LO, _SCAN_HI)
 
 
@@ -395,10 +391,9 @@ def _transitions(tz):
 def _interesting_instants(tz, lo, hi):
     """The interesting instants for ``tz`` within the window of UTC instants
     [lo, hi], as a sorted tuple of naive datetimes, plus the index to shrink
-    towards (the instant nearest year 2000).  Returns ``((), 0)`` if there
-    are none, or if the tzinfo misbehaves when probed - inside this cached
-    function, so that the structure of tricky draws can never vary between
-    otherwise-identical calls.
+    towards.
+
+    Returns ``((), 0)`` if there are none.
     """
     try:
         if tz is None:
@@ -481,7 +476,7 @@ class DatetimeStrategy(SearchStrategy):
     def do_draw(self, data):
         # We start by drawing a timezone, and then - with some probability -
         # target a "tricky" value near a timezone transition, leap second, or
-        # famous rollover; see issue #69.
+        # well-known rollover; see issue #69.
         tz = data.draw(self.tz_strat)
         if self.aware and not isinstance(tz, dt.tzinfo):
             raise InvalidArgument(
@@ -502,13 +497,10 @@ class DatetimeStrategy(SearchStrategy):
         return result
 
     def draw_tricky_datetime(self, data, tz):
-        """Draw a wall time from a narrow window around one of the drawn
-        timezone's interesting instants, clamped to the strategy's bounds so
-        that the result satisfies them by construction.  If there is nothing
-        tricky to aim for, fall back to an ordinary, unbiased draw."""
+        """Draw a tricky datetime using the interesting instants."""
         try:
             instants, nearest = _interesting_instants(tz, *self.instant_window)
-        except TypeError:  # an unhashable tzinfo, which raises on every call
+        except TypeError:  # eg an unhashable tzinfo
             instants, nearest = (), 0
         if self.aware:
             try:
@@ -529,7 +521,7 @@ class DatetimeStrategy(SearchStrategy):
         width = _TRICKY_WIDTHS[data.draw_integer(0, len(_TRICKY_WIDTHS) - 1)]
         if tz is not None:
             # This cannot overflow: transitions were converted to tz when we
-            # probed for them, and the fixed instants are all C20-C21.
+            # probed for them, and the fixed instants are all in the 20th-21st centuries.
             instant = (
                 instant.replace(tzinfo=dt.timezone.utc)
                 .astimezone(tz)
@@ -543,7 +535,7 @@ class DatetimeStrategy(SearchStrategy):
         value = replace_tzinfo(dt.datetime(**result), timezone=tz)
         if self.aware and not self.in_bounds(value):
             # An ambiguous wall time next to a bound, with the out-of-bounds
-            # fold - just as in draw_aware_datetime.
+            # fold, like draw_aware_datetime.
             data.mark_invalid(f"{value!r} is outside the bounds")
         return value
 
@@ -862,7 +854,7 @@ def datetimes(
     bugs, this strategy deliberately generates values on or near the drawn
     timezone's daylight-saving and other offset transitions - including
     imaginary wall times, and ambiguous ones with each value of ``fold`` -
-    as well as times adjacent to leap seconds and to famous rollovers such as
+    as well as times adjacent to leap seconds and to well-known rollovers such as
     the millennium and the end of the signed 32-bit Unix epoch.
 
     .. note::

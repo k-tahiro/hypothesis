@@ -169,8 +169,7 @@ def test_allow_imaginary_is_not_an_error_for_naive_datetimes(d):
 
 
 def test_generates_leap_second_adjacent_times():
-    # A fraction of draws target an interesting instant such as a leap
-    # second, so wall times just before one show up even without bounds.
+    # we upweight instants near leap seconds
     find_any(datetimes(), lambda x: x.time() >= dt.time(23, 59, 58, 999999))
 
 

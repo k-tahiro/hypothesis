@@ -691,10 +691,9 @@ def update_vendored_files():
     new = response.content
 
     def data_lines(raw):
+        # skip comment lines, which include a last-update timestamp and expiry date
         return [line for line in raw.splitlines() if not line.startswith(b"#")]
 
-    # Comment lines include a last-update timestamp and an expiry date, which
-    # change without any new leap seconds; skip the update unless the data did.
     if data_lines(fname.read_bytes()) != data_lines(new):
         fname.write_bytes(new)
 

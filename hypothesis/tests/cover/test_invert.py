@@ -804,8 +804,6 @@ def _boom(value):
 
 
 def test_raising_filter_condition_cannot_invert():
-    # A raising condition counts as unsatisfied - the exception must not
-    # escape, e.g. into the replay which re-encodes a ValueHole.
     strategy = unwrap_strategies(st.integers()).filter(_boom)
     with pytest.raises(CannotInvert):
         strategy._invert(1)

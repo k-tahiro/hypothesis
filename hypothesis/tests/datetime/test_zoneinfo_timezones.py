@@ -265,9 +265,7 @@ def test_generates_ambiguous_datetimes_in_both_folds(fold):
 
 
 def test_probing_finds_transitions_a_week_apart():
-    # Brazil moved the start of DST forward by one week in October 2000 - the
-    # closest pair of transitions anywhere in tzdata, and the reason that
-    # _PROBE_STEP must stay below seven days.
+    # Brazil moved the start of DST forward by one week in October 2000
     found = _probe_transitions(
         zoneinfo.ZoneInfo("America/Noronha"),
         dt.datetime(2000, 9, 1),
@@ -278,9 +276,7 @@ def test_probing_finds_transitions_a_week_apart():
 
 def test_probing_a_misaligned_window_still_finds_transitions():
     # Windows whose endpoints are not whole seconds exercise the bisection
-    # guard for sub-second intervals straddling a whole second: a window of
-    # between one and two seconds around the transition, starting just after
-    # a whole second, forces it on the first bisection step.
+    # guard for sub-second intervals straddling a whole second
     transition = dt.datetime(2007, 3, 11, 7)  # 02:00 EST -> 03:00 EDT
     lo = transition - dt.timedelta(seconds=1) + dt.timedelta(microseconds=1)
     for hi in [
