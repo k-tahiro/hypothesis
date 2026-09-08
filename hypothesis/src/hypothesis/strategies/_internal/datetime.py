@@ -312,12 +312,10 @@ _LEAP_SECONDS = (
     dt.datetime(2015, 7, 1),
     dt.datetime(2017, 1, 1),
 )
-# Famous rollovers, as UTC instants: the Unix epoch, the millennium (also the
-# instant that examples shrink towards), and the first moment beyond a signed
-# 32-bit Unix timestamp.
-_ROLLOVERS = (
-    dt.datetime(1970, 1, 1),
-    dt.datetime(2000, 1, 1),
+_INTERESTING_INSTANTS = _LEAP_SECONDS + (
+    dt.datetime(1970, 1, 1),  # unix epoch
+    dt.datetime(2000, 1, 1),  # millennium
+    # first moment after the largest signed 32-bit unix timestamp
     dt.datetime(2038, 1, 19, 3, 14, 8),
 )
 
@@ -411,12 +409,12 @@ def _interesting_instants(tz, lo, hi):
     except Exception:
         return (), 0
     instants = tuple(
-        t for t in sorted(transitions + _LEAP_SECONDS + _ROLLOVERS) if lo <= t <= hi
+        t for t in sorted(transitions + _INTERESTING_INSTANTS) if lo <= t <= hi
     )
     if not instants:
         return (), 0
-    arbitrary = dt.datetime(2000, 1, 1)
-    nearest = min(range(len(instants)), key=lambda i: abs(instants[i] - arbitrary))
+    shrink_target = dt.datetime(2000, 1, 1)
+    nearest = min(range(len(instants)), key=lambda i: abs(instants[i] - shrink_target))
     return instants, nearest
 
 
@@ -465,13 +463,13 @@ class DatetimeStrategy(SearchStrategy):
             lo = dt.datetime.min + min(max(self.min_instant, zero), whole)
             hi = dt.datetime.min + min(max(self.max_instant, zero), whole)
         else:
-            slop = dt.timedelta(days=1)  # room for any UTC offset
-            lo = max(dt.datetime.min + slop, _as_naive_datetime(min_value)) - slop
-            hi = min(dt.datetime.max - slop, _as_naive_datetime(max_value)) + slop
+            margin = dt.timedelta(days=1)  # room for any UTC offset
+            lo = max(dt.datetime.min + margin, _as_naive_datetime(min_value)) - margin
+            hi = min(dt.datetime.max - margin, _as_naive_datetime(max_value)) + margin
         self.instant_window = (lo, hi)
-        self.tricky_possible = any(
-            lo <= t <= hi for t in _LEAP_SECONDS + _ROLLOVERS
-        ) or (_timezones_kind(self.tz_strat) != "none")
+        self.tricky_possible = any(lo <= t <= hi for t in _INTERESTING_INSTANTS) or (
+            _timezones_kind(self.tz_strat) != "none"
+        )
 
     def do_draw(self, data):
         # We start by drawing a timezone, and then - with some probability -
@@ -489,7 +487,7 @@ class DatetimeStrategy(SearchStrategy):
         elif self.aware:
             result = self.draw_aware_datetime(data, tz)
         else:
-            result = self.draw_naive_datetime_and_combine(data, tz)
+            result = self.draw_naive_datetime(data, tz)
 
         # If we happened to end up with a disallowed imaginary time, reject it.
         if (not self.allow_imaginary) and datetime_does_not_exist(result):
@@ -514,7 +512,7 @@ class DatetimeStrategy(SearchStrategy):
         if not instants:
             if self.aware:
                 return self.draw_aware_datetime(data, tz)
-            return self.draw_naive_datetime_and_combine(data, tz)
+            return self.draw_naive_datetime(data, tz)
         instant = instants[
             data.draw_integer(0, len(instants) - 1, shrink_towards=nearest)
         ]
@@ -602,7 +600,7 @@ class DatetimeStrategy(SearchStrategy):
             return None
         return min_local, max_local
 
-    def draw_naive_datetime_and_combine(self, data, tz):
+    def draw_naive_datetime(self, data, tz):
         result = draw_capped_multipart(data, self.min_value, self.max_value)
         try:
             return replace_tzinfo(dt.datetime(**result), timezone=tz)
@@ -614,9 +612,8 @@ class DatetimeStrategy(SearchStrategy):
 
     def _invert(self, value: Any) -> tuple[ChoiceT, ...]:
         # do_draw draws the tricky-path selector after the timezone, when one
-        # is drawn at all; we always re-encode via the ordinary path, which
-        # can produce any value of the strategy.
-        selector = (False,) if self.tricky_possible else ()
+        # is drawn at all. We always re-encode via the ordinary path.
+        tricky_selector = (False,) if self.tricky_possible else ()
         if self.aware:
             if type(value) is not dt.datetime or value.tzinfo is None:
                 raise CannotInvert(f"{value!r} is not an aware datetime")
@@ -635,7 +632,7 @@ class DatetimeStrategy(SearchStrategy):
                 )
             return (
                 *self.tz_strat._invert(value.tzinfo),
-                *selector,
+                *tricky_selector,
                 *self._invert_aware_fields(value, value.tzinfo, imaginary=imaginary),
             )
         if type(value) is not dt.datetime:
@@ -653,7 +650,7 @@ class DatetimeStrategy(SearchStrategy):
         # drawn last, since it is ignored in datetime comparisons).
         return (
             *self.tz_strat._invert(value.tzinfo),
-            *selector,
+            *tricky_selector,
             value.year,
             value.month,
             value.day,
