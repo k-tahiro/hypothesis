@@ -385,7 +385,8 @@ def _probe_transitions(tz, lo, hi):
     return tuple(transitions)
 
 
-@cache
+# cap memory usage in case of manually constructed timezones in a tight loop
+@lru_cache(maxsize=2048)
 def _transitions(tz):
     return _probe_transitions(tz, _SCAN_LO, _SCAN_HI)
 
